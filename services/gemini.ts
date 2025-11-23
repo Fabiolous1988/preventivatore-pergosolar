@@ -205,10 +205,23 @@ export const calculateEstimate = async (
 
 export const chatWithAgent = async (history: any[], message: string) => {
     const ai = getClient();
-    const chat = ai.chats.create({
-        model: "gemini-3-pro-preview",
-        history: history
-    });
-    const result = await chat.sendMessage(message);
-    return result.text;
+    
+    // Try with Pro first
+    try {
+        const chat = ai.chats.create({
+            model: "gemini-3-pro-preview",
+            history: history
+        });
+        const result = await chat.sendMessage(message);
+        return result.text;
+    } catch (e) {
+        console.warn("Gemini Pro Chat failed, falling back to Flash", e);
+        // Fallback to Flash if Pro fails (e.g. rate limit, stability)
+        const chatFlash = ai.chats.create({
+            model: "gemini-2.5-flash",
+            history: history
+        });
+        const result = await chatFlash.sendMessage(message);
+        return result.text;
+    }
 };

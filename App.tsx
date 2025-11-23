@@ -7,7 +7,7 @@ import EstimationForm from './components/EstimationForm';
 import ResultsDisplay from './components/ResultsDisplay';
 import ChatInterface from './components/ChatInterface';
 import ApiKeySettings from './components/ApiKeySettings';
-import { Calculator, Map, Settings } from 'lucide-react';
+import { Calculator, Settings } from 'lucide-react';
 
 const App: React.FC = () => {
   const [result, setResult] = useState<EstimateResult | null>(null);
@@ -62,14 +62,10 @@ const App: React.FC = () => {
             <div className="bg-blue-600 p-2 rounded-lg">
                 <Calculator className="w-5 h-5 text-white" />
             </div>
-            <h1 className="text-xl font-bold text-slate-800 tracking-tight">FieldEst <span className="text-slate-400 font-normal">AI Agent</span></h1>
+            <h1 className="text-xl font-bold text-slate-800 tracking-tight">Pergosolar Estimator Agent</h1>
           </div>
           
           <div className="flex items-center gap-3">
-             <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
-                <Map className="w-3 h-3" />
-                <span>Powered by Gemini</span>
-             </div>
              <button 
                 onClick={() => setIsSettingsOpen(true)}
                 className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-full transition-colors"

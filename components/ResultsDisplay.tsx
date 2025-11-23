@@ -112,7 +112,7 @@ const ResultsDisplay: React.FC<Props> = ({ result }) => {
     // Title
     doc.setFontSize(20);
     doc.setTextColor(30, 64, 175); // Blue
-    doc.text("Preventivo Field Service", 14, 20);
+    doc.text("Preventivo Pergosolar", 14, 20);
     
     // Meta Info
     doc.setFontSize(10);
@@ -187,7 +187,7 @@ const ResultsDisplay: React.FC<Props> = ({ result }) => {
     const reasoningSplit = doc.splitTextToSize(`Note AI: ${result.commonReasoning}`, 180);
     doc.text(reasoningSplit, 14, finalY + 35);
 
-    doc.save("Preventivo_FieldService.pdf");
+    doc.save("Preventivo_Pergosolar.pdf");
   };
 
   const renderCostSection = (title: string, items: CostItem[], categoryKey: string, icon: React.ReactNode, colorClass: string) => {
