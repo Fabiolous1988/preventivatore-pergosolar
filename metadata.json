@@ -1,5 +1,5 @@
 {
-  "name": "Field Service Estimator Agent",
+  "name": "Pergosolar Estimator Agent",
   "description": "An AI-powered agent to calculate installation costs, logistics, and sales quotes for field technicians using real-time search and map data.",
   "requestFramePermissions": []
 }
