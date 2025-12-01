@@ -246,9 +246,14 @@ export const calculateEstimate = async (
     3. Se ci sono Zavorre e il cliente NON ha il muletto, DEVI inserire il costo NOLEGGIO MULETTO (700€ base + 120€/gg extra).
     4. Cerca Hotel (solo per squadra interna) entro un raggio di 15km dal cantiere.
     
+    IMPORTANTE - PRIORITÀ AI COSTI TABELLARI:
+    - Se nella sezione "COSTI LOGISTICA PER PROVINCIA" sono presenti costi per Bilico o Gru, DEVI USARE ESATTAMENTE QUELLI. 
+    - Ignora stime generiche di mercato se hai il dato tabellare per la provincia.
+    - Se il costo tabellare è €500, usa €500.
+
     LOGICA WEEKEND (DATA-AWARE):
     - Controlla se l'intervallo di date (${inputs.startDate} per ${inputs.durationDays} giorni) include sabati/domeniche.
-    - Se sì E "Rientro nel Weekend" è attivo, applica i costi di viaggio extra.
+    - Se sì E "Rientro nel Weekend" è attivo, applica i costi di viaggio A/R extra.
     - Se no (es. lunedì-venerdì), ignora l'opzione Rientro Weekend.
 
     SCENARIO A: SQUADRA INTERNA
@@ -264,6 +269,7 @@ export const calculateEstimate = async (
     - Nel "logisticsSummary", scrivi esplicitamente "MEZZO TRASPORTO: [Bilico/Camion Gru/Furgone]".
     - Crea una voce di costo separata chiamata "Trasporto Materiale (Bilico/Gru)" sotto la categoria "Viaggio" se applicabile.
     - NON scrivere esplicitamente "Margine del X%" nel testo. Dai solo il valore finale in euro.
+    - PULIZIA: NON INCLUDERE flag tecnici come "(IncludeBallast=true)" o "(No Customer Forklift)" nella descrizione testuale. Descrivi la situazione in italiano naturale (es. "Incluso costo muletto poiché non presente in loco").
 
     OUTPUT JSON:
     {

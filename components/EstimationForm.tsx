@@ -455,21 +455,14 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
                     name="durationDays"
                     value={formData.durationDays}
                     onChange={handleChange}
-                    disabled={formData.serviceType === ServiceType.FULL_INSTALLATION}
-                    className={`flex-1 p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none ${formData.serviceType === ServiceType.FULL_INSTALLATION ? 'bg-slate-100 text-slate-500' : ''}`}
+                    className="flex-1 p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white"
                     required
                 />
-                {formData.serviceType !== ServiceType.FULL_INSTALLATION && (
-                    <button
-                        type="button"
-                        onClick={applyCalculatedDays}
-                        className="px-3 py-2 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 whitespace-nowrap flex items-center gap-1"
-                        title="Usa la stima calcolata in background"
-                    >
-                        <ArrowDownCircle className="w-4 h-4" />
-                        Applica calcolo
-                    </button>
-                )}
+                {/* Visual indicator that this is a suggestion */}
+                <span className="px-3 py-2 text-xs font-medium text-slate-500 bg-slate-50 border border-slate-200 rounded-lg whitespace-nowrap flex items-center gap-1" title="Calcolato automaticamente in base alle specifiche">
+                    <RefreshCw className="w-3 h-3" />
+                    Auto-calcolo attivo
+                </span>
             </div>
             
             {/* Weekend Return Checkbox - Only for Full Installation */}
