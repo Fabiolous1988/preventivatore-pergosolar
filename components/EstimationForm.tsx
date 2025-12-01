@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { EstimateInputs, ServiceType, TransportMode, ModelsConfig, LogisticsConfig } from '../types';
 import { PERGOLA_MODELS, calculateInstallationHours, calculateBallastCount } from '../services/calculator';
-import { Loader2, MapPin, Calendar, Truck, UserCog, Percent, Building2, PlusCircle, LayoutGrid, CarFront, ArrowDownCircle, Users, CheckSquare, Weight, BoxSelect, RefreshCw } from 'lucide-react';
+import { Loader2, MapPin, Calendar, Truck, UserCog, Building2, LayoutGrid, CarFront, ArrowDownCircle, Users, CheckSquare, Weight, BoxSelect, RefreshCw } from 'lucide-react';
 
 interface Props {
   onSubmit: (data: EstimateInputs) => void;
@@ -43,15 +43,12 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
   const [hasForklift, setHasForklift] = useState<boolean>(false);
   const [returnOnWeekends, setReturnOnWeekends] = useState<boolean>(false);
 
-  const [formData, setFormData] = useState<Omit<EstimateInputs, 'origin' | 'destination' | 'excludeOriginTransfer' | 'selectedModelId' | 'parkingSpots' | 'includePV' | 'includeGaskets' | 'includeBallast' | 'calculatedHours' | 'useInternalTeam' | 'internalTechs' | 'useExternalTeam' | 'externalTechs' | 'modelsConfig' | 'hasForklift' | 'returnOnWeekends'>>({
+  const [formData, setFormData] = useState<Omit<EstimateInputs, 'origin' | 'destination' | 'excludeOriginTransfer' | 'selectedModelId' | 'parkingSpots' | 'includePV' | 'includeGaskets' | 'includeBallast' | 'calculatedHours' | 'useInternalTeam' | 'internalTechs' | 'useExternalTeam' | 'externalTechs' | 'modelsConfig' | 'hasForklift' | 'returnOnWeekends' | 'marginPercent' | 'extraHourlyCost' | 'extraDailyCost'>>({
     serviceType: ServiceType.FULL_INSTALLATION,
     transportMode: TransportMode.COMPANY_VEHICLE,
     startDate: new Date().toISOString().split('T')[0],
     durationDays: 1,
-    marginPercent: 30,
-    additionalNotes: '',
-    extraHourlyCost: 0,
-    extraDailyCost: 0
+    additionalNotes: 'Necessarie stanze singole per alloggio tecnici.',
   });
 
   const selectedModel = PERGOLA_MODELS.find(m => m.id === selectedModelId);
@@ -64,6 +61,7 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
     if (formData.serviceType === ServiceType.FULL_INSTALLATION) {
         const activeTechs = (useInternalTeam ? internalTechs : 0) + (useExternalTeam ? externalTechs : 0);
         const techs = activeTechs > 0 ? activeTechs : 1;
+        // Logic: Hours / Techs / 9 hours per day. Round up to nearest 0.5
         const estimatedDays = Math.max(1, Math.ceil(hours / techs / 9 * 2) / 2);
         setFormData(prev => ({ ...prev, durationDays: estimatedDays }));
     }
@@ -92,7 +90,7 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
-      [name]: ['durationDays', 'marginPercent', 'extraHourlyCost', 'extraDailyCost'].includes(name) ? Number(value) : value
+      [name]: name === 'durationDays' ? Number(value) : value
     }));
   };
 
@@ -132,7 +130,11 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
       calculatedHours,
       hasForklift,
       returnOnWeekends,
-      modelsConfig
+      modelsConfig,
+      // Default placehoders, will be overwritten by App.tsx with config values
+      marginPercent: 0,
+      extraHourlyCost: 0,
+      extraDailyCost: 0
     });
   };
 
@@ -240,20 +242,22 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
                         required
                     />
                 </div>
-                 <div className="flex items-start gap-3 mt-1 p-2 bg-slate-100 rounded-md border border-slate-200">
-                    <div className="flex items-center h-5">
-                        <input
-                            id="hasForklift"
-                            type="checkbox"
-                            checked={hasForklift}
-                            onChange={(e) => setHasForklift(e.target.checked)}
-                            className="w-4 h-4 text-slate-600 border-slate-300 rounded focus:ring-slate-500"
-                        />
-                    </div>
-                    <label htmlFor="hasForklift" className="text-xs text-slate-600 cursor-pointer flex items-center gap-1">
-                        <BoxSelect className="w-4 h-4 text-slate-500"/>
-                        <span className="font-semibold text-slate-700">Disponibilità Muletto/Mezzo di Scarico in cantiere?</span>
+                 
+                 {/* Has Forklift Toggle */}
+                 <div className="flex items-center justify-between p-3 bg-slate-100 rounded-lg border border-slate-200 mt-2">
+                    <label className="text-sm font-medium text-slate-700 flex items-center gap-2 cursor-pointer" onClick={() => setHasForklift(!hasForklift)}>
+                        <BoxSelect className="w-5 h-5 text-slate-500"/>
+                        <span>Disponibilità Muletto/Mezzo di Scarico in cantiere?</span>
                     </label>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={hasForklift}
+                        onClick={() => setHasForklift(!hasForklift)}
+                        className={`${hasForklift ? 'bg-blue-600' : 'bg-slate-300'} relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500`}
+                    >
+                        <span className={`${hasForklift ? 'translate-x-6' : 'translate-x-1'} inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}/>
+                    </button>
                 </div>
             </div>
         </div>
@@ -441,7 +445,7 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
 
         <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
-                <Calendar className="w-4 h-4" /> Giorni di Lavoro (Stimati)
+                <Calendar className="w-4 h-4" /> Giorni Lavorativi Stimati (Ore Totali / 9)
             </label>
             <div className="flex gap-2">
                 <input
@@ -487,53 +491,8 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
                     </label>
                 </div>
             )}
-
-            <p className="text-xs text-slate-500 mt-1">
-              {formData.serviceType === ServiceType.FULL_INSTALLATION 
-                ? "Calcolato automaticamente in base alle specifiche." 
-                : "Inserisci manualmente o applica la stima basata sul modello selezionato."}
-            </p>
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-t border-slate-200 pt-4">
-             <div className="space-y-1">
-                <label className="text-xs font-medium text-slate-600 flex items-center gap-1">
-                    <Percent className="w-3 h-3" /> Margine (%)
-                </label>
-                <input
-                    type="number"
-                    name="marginPercent"
-                    value={formData.marginPercent}
-                    onChange={handleChange}
-                    className="w-full p-2 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm"
-                />
-             </div>
-             <div className="space-y-1">
-                <label className="text-xs font-medium text-slate-600 flex items-center gap-1">
-                    <PlusCircle className="w-3 h-3" /> Extra/Ora
-                </label>
-                <input
-                    type="number"
-                    name="extraHourlyCost"
-                    value={formData.extraHourlyCost}
-                    onChange={handleChange}
-                    className="w-full p-2 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm"
-                />
-             </div>
-             <div className="space-y-1">
-                <label className="text-xs font-medium text-slate-600 flex items-center gap-1">
-                    <PlusCircle className="w-3 h-3" /> Extra/Giorno
-                </label>
-                <input
-                    type="number"
-                    name="extraDailyCost"
-                    value={formData.extraDailyCost}
-                    onChange={handleChange}
-                    className="w-full p-2 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm"
-                />
-             </div>
-        </div>
-
         <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700">Note Aggiuntive</label>
             <textarea

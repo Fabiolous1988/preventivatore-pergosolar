@@ -17,9 +17,9 @@ export interface EstimateInputs {
   transportMode: TransportMode;
   startDate: string;
   durationDays: number; // Used for Support modes or calculated from hours
-  marginPercent: number;
+  marginPercent: number; // Hidden from user, populated from config
   additionalNotes: string;
-  // Manual Extra Costs
+  // Manual Extra Costs - Hidden from user, populated from config
   extraHourlyCost: number;
   extraDailyCost: number;
   
@@ -81,6 +81,9 @@ export interface PergolaModel {
 export interface AppConfig {
   internalHourlyRate: number;
   externalHourlyRate: number;
+  defaultMargin: number;
+  defaultExtraHourly: number;
+  defaultExtraDaily: number;
   // Store any other parameters found in the sheet (Key -> {Value, Description})
   customParams: Record<string, { value: number; description?: string }>;
 }

@@ -3,67 +3,81 @@ import { AppConfig, ModelsConfig, LogisticsConfig } from '../types';
 
 // Hardcoded URLs provided by user
 export const LOGISTICS_SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTL-4djiL6_Z8-PmHgKeJ2QmEHtZdChrJXEBIni0FyQ8Nu3dkm_6j5haSd6SElMNw/pub?output=csv';
-
-// Placeholders - You can replace these with the actual specific sheets if they differ, 
-// or point to the same sheet if all data is in one file (though usually formatted differently)
 export const GENERAL_CONFIG_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTL-4djiL6_Z8-PmHgKeJ2QmEHtZdChrJXEBIni0FyQ8Nu3dkm_6j5haSd6SElMNw/pub?output=csv'; 
 export const MODELS_CONFIG_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vR9RtPO7RSU2bQMuQLxtF44P0IT0ccAp4NgMAmSx6u-xGBNtSb2GPrN9YbVdLA7XQ/pub?output=csv';
+export const METRICS_CONFIG_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSk32mnQqJSHloRb9OtVSqjpMvcNrnN9c5INGTUXr6N3t0AwisjfftWyIT8m-YBgg/pub?output=csv';
 
 export const DEFAULT_CONFIG: AppConfig = {
     internalHourlyRate: 20,
     externalHourlyRate: 37,
+    defaultMargin: 30,
+    defaultExtraHourly: 0,
+    defaultExtraDaily: 0,
     customParams: {}
 };
 
-export const fetchAppConfig = async (url: string = GENERAL_CONFIG_URL): Promise<AppConfig> => {
+export const fetchAppConfig = async (): Promise<AppConfig> => {
     try {
-        // console.log("Fetching config from:", url);
-        const response = await fetch(url);
-        if (!response.ok) throw new Error("Network response was not ok");
-        
-        const text = await response.text();
-        const lines = text.split('\n');
-        const config: AppConfig = { 
-            internalHourlyRate: 20, 
-            externalHourlyRate: 37,
-            customParams: {} 
-        };
-        
-        lines.forEach(line => {
-            const parts = line.split(',');
-            if (parts.length >= 2) {
-                const key = parts[0].trim().replace(/^["']|["']$/g, '');
-                const valStr = parts[1].trim();
-                const value = parseFloat(valStr);
-                let description = '';
-                if (parts.length > 2) {
-                    description = parts.slice(2).join(',').trim().replace(/^["']|["']$/g, '');
-                }
+        // Fetch both General and Metrics configs in parallel and merge them
+        const [generalRes, metricsRes] = await Promise.all([
+            fetch(GENERAL_CONFIG_URL),
+            fetch(METRICS_CONFIG_URL)
+        ]);
 
-                if (!isNaN(value) && key) {
-                    config.customParams[key] = { value, description };
+        const config: AppConfig = { ...DEFAULT_CONFIG };
+        
+        const parseCSV = async (res: Response) => {
+            if (!res.ok) return;
+            const text = await res.text();
+            const lines = text.split('\n');
+            lines.forEach(line => {
+                const parts = line.split(',');
+                if (parts.length >= 2) {
+                    const key = parts[0].trim().replace(/^["']|["']$/g, '');
+                    const valStr = parts[1].trim();
+                    const value = parseFloat(valStr);
+                    let description = '';
+                    if (parts.length > 2) {
+                        description = parts.slice(2).join(',').trim().replace(/^["']|["']$/g, '');
+                    }
 
-                    const lowerKey = key.toLowerCase();
-                    if (lowerKey === 'internal_rate' || lowerKey === 'internal_hourly_rate') {
-                        config.internalHourlyRate = value;
-                    } else if (lowerKey === 'external_rate' || lowerKey === 'external_hourly_rate') {
-                        config.externalHourlyRate = value;
+                    if (!isNaN(value) && key) {
+                        config.customParams[key] = { value, description };
+                        const lowerKey = key.toLowerCase();
+                        
+                        // Labor Rates
+                        if (lowerKey === 'internal_rate' || lowerKey === 'internal_hourly_rate') {
+                            config.internalHourlyRate = value;
+                        } else if (lowerKey === 'external_rate' || lowerKey === 'external_hourly_rate') {
+                            config.externalHourlyRate = value;
+                        }
+                        
+                        // Metrics (Hidden)
+                        if (lowerKey.includes('margine') || lowerKey === 'margin_percent') {
+                            config.defaultMargin = value;
+                        } else if (lowerKey.includes('extra_ora') || lowerKey === 'extra_hourly') {
+                            config.defaultExtraHourly = value;
+                        } else if (lowerKey.includes('extra_giorno') || lowerKey === 'extra_daily') {
+                            config.defaultExtraDaily = value;
+                        }
                     }
                 }
-            }
-        });
+            });
+        };
+
+        await parseCSV(generalRes);
+        await parseCSV(metricsRes);
 
         return config;
 
     } catch (error) {
-        console.warn("Failed to load general config sheet. Using defaults.", error);
+        console.warn("Failed to load config sheets. Using defaults.", error);
         return DEFAULT_CONFIG;
     }
 };
 
 export const fetchModelsConfig = async (url: string = MODELS_CONFIG_URL): Promise<ModelsConfig | null> => {
     try {
-        // console.log("Fetching models config from:", url);
         const response = await fetch(url);
         if (!response.ok) throw new Error("Models sheet network error");
 
@@ -139,7 +153,6 @@ export const fetchLogisticsConfig = async (url: string = LOGISTICS_SHEET_URL): P
             logisticsConfig[province] = costs;
         }
         
-        console.log("Logistics Config Loaded:", Object.keys(logisticsConfig).length, "provinces");
         return logisticsConfig;
 
     } catch (error) {

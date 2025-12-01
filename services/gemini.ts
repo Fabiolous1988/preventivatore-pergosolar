@@ -13,7 +13,7 @@ const BASE_BUSINESS_RULES = `
 - ore_totali_giornata_porta_porta: 10 ore (Viaggio + Lavoro)
 - km_per_litro_furgone: 11 km/l
 - costo_usura_mezzo_euro_km: €0.037/km
-- raggio_spostamenti_loco: 15 km (Hotel-Cantiere)
+- raggio_spostamenti_loco: 15 km (Hotel-Cantiere, max 20 min auto)
 `;
 
 // NEW LOGISTICS RULES
@@ -21,19 +21,21 @@ const LOGISTICS_RULES = `
 REGOLA ZAVORRE E MULETTO (MANDATORIA):
 - Se ci sono Zavorre (includeBallast = true), è OBBLIGATORIO noleggiare un mezzo di sollevamento (Muletto), a meno che il cliente non lo abbia (hasForklift).
 - COSTO NOLEGGIO MULETTO:
-  - Fino a 5 giorni (inclusi): €700 forfait.
+  - Fino a 5 giorni lavorativi (inclusi): €700 forfait.
   - Dal 6° giorno in poi: + €120 per ogni giorno extra.
   - Esempio: 4 giorni = €700. 7 giorni = €700 + (2 * 120) = €940.
 
-REGOLA SQUADRE ESTERNE (MANDATORIA):
-- Le squadre ESTERNE fatturano SOLO LE ORE LAVORATE.
-- NON CALCOLARE MAI costi di viaggio (km, autostrada), vitto o alloggio per i tecnici ESTERNI. Il loro costo orario (es. €37) è "all inclusive".
+REGOLA SQUADRE ESTERNE (CRUCIALE):
+- Le squadre ESTERNE fatturano SOLO LE ORE LAVORATE moltiplicate per la tariffa oraria.
+- ZERO SPESE VIAGGIO, ZERO VITTO, ZERO ALLOGGIO per tecnici esterni (sono costi inclusi nella loro tariffa).
 - Se c'è una squadra mista (Interni + Esterni), calcola viaggio/hotel SOLO per gli Interni.
 
 REGOLA RIENTRO WEEKEND:
-- Se l'opzione "returnOnWeekends" è attiva E la durata del cantiere supera i 5 giorni lavorativi (quindi copre un weekend):
-  - Aggiungi costi di viaggio A/R extra per far rientrare la squadra INTERNA a casa nel fine settimana.
+- Controlla le date (startDate + durationDays).
+- Se l'opzione "returnOnWeekends" è attiva E il periodo di lavoro include un Sabato e una Domenica nel mezzo (quindi NON finisce di venerdì):
+  - Aggiungi costi di viaggio A/R extra per far rientrare la squadra INTERNA a casa.
   - Formula stima: (Distanza * 2) km aggiuntivi + Autostrada A/R.
+  - Se non c'è weekend nel mezzo, ignora questa opzione anche se attiva.
 
 LOGISTICA MEZZI (PESI):
 - Peso Zavorra Singola: 1600 kg (standard) o vedi Knowledge Base.
@@ -60,10 +62,8 @@ const cleanAndParseJSON = (text: string) => {
 
 const getClient = () => {
     const apiKey = getStoredApiKey();
-    if (!apiKey) {
-        throw new Error("Chiave API mancante. Inseriscila nelle impostazioni.");
-    }
-    return new GoogleGenAI({ apiKey });
+    // No error throw here, let SDK handle it or use default if handled in storage
+    return new GoogleGenAI({ apiKey: apiKey || '' });
 };
 
 export const chatWithAgent = async (history: any[], message: string) => {
@@ -216,14 +216,21 @@ export const calculateEstimate = async (
     DATI INPUT:
     - Origine (HQ): ${inputs.origin}
     - Destinazione: ${inputs.destination} (Provincia: ${destProvinceCode})
+    - Data Inizio: ${inputs.startDate}
     - Modalità: ${inputs.transportMode}
-    - Squadra INTERNA: ${inputs.internalTechs} persone.
-    - Squadra ESTERNA: ${inputs.externalTechs} persone.
+    - Squadra INTERNA: ${inputs.internalTechs} persone (Tariffa: €${config.internalHourlyRate}/h).
+    - Squadra ESTERNA: ${inputs.externalTechs} persone (Tariffa: €${config.externalHourlyRate}/h).
     - Modello: ${inputs.selectedModelId} (Posti: ${inputs.parkingSpots})
     - Zavorre: ${ballastCount} (Stima peso: ${estBallastWeight} kg)
-    - Muletto Cliente: ${inputs.hasForklift ? 'Sì' : 'No'}
+    - Muletto Cliente (già in loco): ${inputs.hasForklift ? 'Sì' : 'No'}
     - Ore Man-Hour Totali Stimate dal sistema: ${inputs.calculatedHours} (Usa questo come base lavoro)
     - Rientro nel Weekend? ${inputs.returnOnWeekends ? 'Sì' : 'No'}
+    - Note Aggiuntive: ${inputs.additionalNotes}
+
+    METRICHE NASCOSTE (DA USARE MA NON RIVELARE):
+    - Margine Commerciale Target: ${inputs.marginPercent}%
+    - Costo Extra Orario: €${inputs.extraHourlyCost}
+    - Costo Extra Giornaliero: €${inputs.extraDailyCost}
 
     REGOLE DI BUSINESS:
     ${BASE_BUSINESS_RULES}
@@ -236,26 +243,34 @@ export const calculateEstimate = async (
     LOGICA LOGISTICA (CRUCIALE):
     1. Calcola il PESO TOTALE del materiale (Struttura + Zavorre) usando i dati della Knowledge Base se disponibili (es. PESO_STRUTTURA, PESO_ZAVORRE).
     2. Determina i mezzi necessari (Furgone, Bilico, Camion Gru) basandoti sui limiti di peso (240q, 160q).
-    3. Se ci sono Zavorre e il cliente NON ha il muletto, DEVI inserire il costo NOLEGGIO MULETTO (700€ base).
-
-    LOGICA SCENARI (COSTI INTERVENTO):
+    3. Se ci sono Zavorre e il cliente NON ha il muletto, DEVI inserire il costo NOLEGGIO MULETTO (700€ base + 120€/gg extra).
+    4. Cerca Hotel (solo per squadra interna) entro un raggio di 15km dal cantiere.
     
+    LOGICA WEEKEND (DATA-AWARE):
+    - Controlla se l'intervallo di date (${inputs.startDate} per ${inputs.durationDays} giorni) include sabati/domeniche.
+    - Se sì E "Rientro nel Weekend" è attivo, applica i costi di viaggio extra.
+    - Se no (es. lunedì-venerdì), ignora l'opzione Rientro Weekend.
+
     SCENARIO A: SQUADRA INTERNA
     - Calcola Viaggio (Km * CostoKm + Autostrada + Tempo Tecnici).
     - Hotel se giorni > 1.
     - Spostamenti locali: (15km * 4 * giorni) * costo km.
-    - Se "Rientro nel Weekend" è attivo e durata > 5gg, calcola viaggi A/R extra.
 
     SCENARIO B: SQUADRA ESTERNA
     - (Ore Totali * Tariffa Oraria Esterna).
-    - STOP. Nessun costo viaggio, hotel o vitto per esterni.
+    - STOP. Nessun costo viaggio, hotel o vitto per esterni. Costi 100% a loro carico.
+
+    OUTPUT REQUIREMENT: 
+    - Nel "logisticsSummary", scrivi esplicitamente "MEZZO TRASPORTO: [Bilico/Camion Gru/Furgone]".
+    - Crea una voce di costo separata chiamata "Trasporto Materiale (Bilico/Gru)" sotto la categoria "Viaggio" se applicabile.
+    - NON scrivere esplicitamente "Margine del X%" nel testo. Dai solo il valore finale in euro.
 
     OUTPUT JSON:
     {
       "options": [
         {
           "id": "opt_1",
-          "methodName": "Descrizione Metodo (es. 1 Camion Gru + Furgone Squadra Interna)",
+          "methodName": "Descrizione Metodo (es. Camion Gru + Squadra Esterna)",
           "logisticsSummary": "Dettaglio peso tot, mezzi scelti, regola autista, regola muletto, regola week-end",
           "breakdown": [
             { "category": "Lavoro", "description": "...", "amount": 0 },

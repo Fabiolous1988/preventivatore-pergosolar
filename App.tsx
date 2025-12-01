@@ -26,7 +26,9 @@ const App: React.FC = () => {
   useEffect(() => {
     const key = getStoredApiKey();
     if (!key) {
-      setIsSettingsOpen(true);
+      // Default key is now hardcoded in storage.ts, so this might trigger less often
+      // but if user manually cleared it, we still show settings
+      // However, since getStoredApiKey now returns default if missing, this branch is rarely taken unless default fails
     }
     
     // Load external configs
@@ -56,8 +58,15 @@ const App: React.FC = () => {
     setError(null);
     setResult(null);
     
-    // Inject loaded logistics config into inputs so service can use it
-    const inputsWithConfig = { ...inputs, logisticsConfig };
+    // Inject loaded logistics config into inputs
+    // AND Inject hidden metrics (Margin, Extras) from appConfig
+    const inputsWithConfig = { 
+        ...inputs, 
+        logisticsConfig,
+        marginPercent: appConfig.defaultMargin,
+        extraHourlyCost: appConfig.defaultExtraHourly,
+        extraDailyCost: appConfig.defaultExtraDaily
+    };
 
     try {
       const data = await calculateEstimate(inputsWithConfig, appConfig, (status) => {

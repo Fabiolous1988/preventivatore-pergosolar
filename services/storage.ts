@@ -2,9 +2,12 @@
 export const STORAGE_KEY = 'fieldest_api_key';
 export const STORAGE_CONFIG_KEY = 'fieldest_config_url';
 export const STORAGE_MODELS_KEY = 'fieldest_models_config_url';
+export const DEFAULT_API_KEY = 'AIzaSyC4O6LEnGIswMLYZIUI1GQD8FVUJ0TcgaM';
 
 export const getStoredApiKey = (): string | null => {
-  return localStorage.getItem(STORAGE_KEY);
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if (stored) return stored;
+  return DEFAULT_API_KEY;
 };
 
 export const setStoredApiKey = (key: string) => {

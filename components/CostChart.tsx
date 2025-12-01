@@ -10,23 +10,24 @@ interface CostChartProps {
 const CostChart: React.FC<CostChartProps> = ({ items }) => {
   // Aggregate by category
   const data = items.reduce((acc, item) => {
-    const existing = acc.find(i => i.name === item.category);
+    // Normalize category name to handle casing issues
+    const cat = item.category?.trim() || 'Altro';
+    const existing = acc.find(i => i.name === cat);
     if (existing) {
       existing.value += item.amount;
     } else {
-      acc.push({ name: item.category, value: item.amount });
+      acc.push({ name: cat, value: item.amount });
     }
     return acc;
   }, [] as { name: string; value: number }[]);
 
-  // Color mapping for specific categories
+  // Vivid Color mapping
   const getColor = (name: string) => {
-      switch(name) {
-          case 'Lavoro': return '#64748b'; // Slate
-          case 'Viaggio': return '#3b82f6'; // Blue
-          case 'Vitto/Alloggio': return '#f97316'; // Orange
-          default: return '#94a3b8';
-      }
+      const lower = name.toLowerCase();
+      if (lower.includes('lavoro') || lower.includes('manodopera')) return '#3b82f6'; // Vivid Blue
+      if (lower.includes('viaggio') || lower.includes('trasport')) return '#10b981'; // Vivid Emerald
+      if (lower.includes('vitto') || lower.includes('alloggio') || lower.includes('hotel')) return '#f59e0b'; // Vivid Amber
+      return '#64748b'; // Slate for others
   };
 
   return (
@@ -35,18 +36,26 @@ const CostChart: React.FC<CostChartProps> = ({ items }) => {
         <PieChart>
           <Pie
             data={data}
-            cx="50%"
+            cx="40%" // Move chart slightly left to make room for legend
             cy="50%"
             labelLine={false}
-            outerRadius={80}
+            outerRadius={75} // Slightly smaller radius
             dataKey="value"
           >
             {data.map((entry, index) => (
               <Cell key={`cell-${index}`} fill={getColor(entry.name)} />
             ))}
           </Pie>
-          <Tooltip formatter={(value: number) => `€${value.toFixed(2)}`} />
-          <Legend />
+          <Tooltip 
+            formatter={(value: number) => `€${value.toFixed(2)}`} 
+            contentStyle={{ backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #e2e8f0' }}
+          />
+          <Legend 
+            layout="vertical" 
+            verticalAlign="middle" 
+            align="right"
+            wrapperStyle={{ paddingLeft: '10px' }}
+          />
         </PieChart>
       </ResponsiveContainer>
     </div>
