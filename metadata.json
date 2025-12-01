@@ -1,5 +1,5 @@
 {
-  "name": "Pergosolar Estimator Agent",
+  "name": "OptiCost",
   "description": "An AI-powered agent to calculate installation costs, logistics, and sales quotes for field technicians using real-time search and map data.",
   "requestFramePermissions": []
 }

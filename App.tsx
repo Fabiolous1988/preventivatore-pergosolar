@@ -1,8 +1,9 @@
 
 import React, { useState, useEffect } from 'react';
-import { EstimateInputs, EstimateResult } from './types';
+import { EstimateInputs, EstimateResult, AppConfig, ModelsConfig, LogisticsConfig } from './types';
 import { calculateEstimate } from './services/gemini';
 import { getStoredApiKey } from './services/storage';
+import { fetchAppConfig, fetchModelsConfig, fetchLogisticsConfig, DEFAULT_CONFIG } from './services/config';
 import EstimationForm from './components/EstimationForm';
 import ResultsDisplay from './components/ResultsDisplay';
 import ChatInterface from './components/ChatInterface';
@@ -15,13 +16,32 @@ const App: React.FC = () => {
   const [loadingStatus, setLoadingStatus] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  
+  // Configurations
+  const [appConfig, setAppConfig] = useState<AppConfig>(DEFAULT_CONFIG);
+  const [modelsConfig, setModelsConfig] = useState<ModelsConfig | null>(null);
+  const [logisticsConfig, setLogisticsConfig] = useState<LogisticsConfig | null>(null);
 
-  // Check for API key on mount
+  // Check for API key and load config on mount
   useEffect(() => {
     const key = getStoredApiKey();
     if (!key) {
       setIsSettingsOpen(true);
     }
+    
+    // Load external configs
+    const loadConfig = async () => {
+        const config = await fetchAppConfig();
+        setAppConfig(config);
+
+        const mConfig = await fetchModelsConfig();
+        setModelsConfig(mConfig);
+        
+        const lConfig = await fetchLogisticsConfig();
+        setLogisticsConfig(lConfig);
+    };
+    loadConfig();
+
   }, []);
 
   const handleEstimate = async (inputs: EstimateInputs) => {
@@ -32,12 +52,15 @@ const App: React.FC = () => {
     }
 
     setLoading(true);
-    setLoadingStatus("Inizializzazione agente...");
+    setLoadingStatus("Inizializzazione OptiCost...");
     setError(null);
     setResult(null);
     
+    // Inject loaded logistics config into inputs so service can use it
+    const inputsWithConfig = { ...inputs, logisticsConfig };
+
     try {
-      const data = await calculateEstimate(inputs, (status) => {
+      const data = await calculateEstimate(inputsWithConfig, appConfig, (status) => {
           setLoadingStatus(status);
       });
       setResult(data);
@@ -54,22 +77,22 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="min-h-screen bg-slate-50 flex flex-col w-full">
       {/* Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <div className="w-full px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="bg-blue-600 p-2 rounded-lg">
                 <Calculator className="w-5 h-5 text-white" />
             </div>
-            <h1 className="text-xl font-bold text-slate-800 tracking-tight">Pergosolar Estimator Agent</h1>
+            <h1 className="text-xl font-bold text-slate-800 tracking-tight">OptiCost</h1>
           </div>
           
           <div className="flex items-center gap-3">
              <button 
                 onClick={() => setIsSettingsOpen(true)}
                 className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-full transition-colors"
-                title="Impostazioni API Key"
+                title="Impostazioni"
              >
                 <Settings className="w-5 h-5" />
              </button>
@@ -78,13 +101,17 @@ const App: React.FC = () => {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
+      <main className="flex-1 w-full px-4 sm:px-6 lg:px-8 py-8">
         
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
             {/* Left Column: Input */}
             <div className="xl:col-span-4">
                 <div className="sticky top-24">
-                    <EstimationForm onSubmit={handleEstimate} isLoading={loading} />
+                    <EstimationForm 
+                        onSubmit={handleEstimate} 
+                        isLoading={loading} 
+                        modelsConfig={modelsConfig}
+                    />
                     
                     {error && (
                         <div className="mt-4 p-4 bg-red-50 text-red-600 rounded-lg border border-red-200 text-sm animate-in fade-in">
@@ -128,7 +155,19 @@ const App: React.FC = () => {
       
       <ApiKeySettings 
         isOpen={isSettingsOpen} 
-        onClose={() => setIsSettingsOpen(false)} 
+        onClose={() => {
+            setIsSettingsOpen(false);
+            // Reload configs on close in case standard fetch failed earlier
+            const loadConfig = async () => {
+                const config = await fetchAppConfig();
+                setAppConfig(config);
+                const mConfig = await fetchModelsConfig();
+                setModelsConfig(mConfig);
+                const lConfig = await fetchLogisticsConfig();
+                setLogisticsConfig(lConfig);
+            };
+            loadConfig();
+        }} 
       />
     </div>
   );

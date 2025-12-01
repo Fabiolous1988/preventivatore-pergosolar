@@ -1,23 +1,51 @@
 
 import { GoogleGenAI } from "@google/genai";
-import { EstimateInputs, EstimateResult, TransportMode } from "../types";
+import { EstimateInputs, EstimateResult, TransportMode, AppConfig } from "../types";
 import { getStoredApiKey } from "./storage";
+import { DEFAULT_CONFIG } from "./config";
+import { calculateBallastCount } from "./calculator";
 
-const COST_CONSTANTS = `
-- Costo Orario Tecnico (Interno): €35/ora
-- Giornata lavorativa: 8 ore
-- Diaria (Trasferta) a persona: €40/giorno (vitto)
-- Usura Veicolo Aziendale: €0.15/km
-- Consumo Medio Carburante: €1.85/litro (circa 12km/l)
-- Margine min: variabile da input
+const BASE_BUSINESS_RULES = `
+- soglia_distanza_trasferta_km: 150 km
+- indennita_trasferta_giornaliera_per_tecnico: €50.00
+- soglia_minima_ore_lavoro_utili: 2 ore (residue dopo viaggio)
+- ore_lavoro_giornaliere_standard: 9 ore (massimo in cantiere)
+- ore_totali_giornata_porta_porta: 10 ore (Viaggio + Lavoro)
+- km_per_litro_furgone: 11 km/l
+- costo_usura_mezzo_euro_km: €0.037/km
+- raggio_spostamenti_loco: 15 km (Hotel-Cantiere)
 `;
 
-// Helper to clean JSON strings
+// NEW LOGISTICS RULES
+const LOGISTICS_RULES = `
+REGOLA ZAVORRE E MULETTO (MANDATORIA):
+- Se ci sono Zavorre (includeBallast = true), è OBBLIGATORIO noleggiare un mezzo di sollevamento (Muletto), a meno che il cliente non lo abbia (hasForklift).
+- COSTO NOLEGGIO MULETTO:
+  - Fino a 5 giorni (inclusi): €700 forfait.
+  - Dal 6° giorno in poi: + €120 per ogni giorno extra.
+  - Esempio: 4 giorni = €700. 7 giorni = €700 + (2 * 120) = €940.
+
+REGOLA SQUADRE ESTERNE (MANDATORIA):
+- Le squadre ESTERNE fatturano SOLO LE ORE LAVORATE.
+- NON CALCOLARE MAI costi di viaggio (km, autostrada), vitto o alloggio per i tecnici ESTERNI. Il loro costo orario (es. €37) è "all inclusive".
+- Se c'è una squadra mista (Interni + Esterni), calcola viaggio/hotel SOLO per gli Interni.
+
+REGOLA RIENTRO WEEKEND:
+- Se l'opzione "returnOnWeekends" è attiva E la durata del cantiere supera i 5 giorni lavorativi (quindi copre un weekend):
+  - Aggiungi costi di viaggio A/R extra per far rientrare la squadra INTERNA a casa nel fine settimana.
+  - Formula stima: (Distanza * 2) km aggiuntivi + Autostrada A/R.
+
+LOGISTICA MEZZI (PESI):
+- Peso Zavorra Singola: 1600 kg (standard) o vedi Knowledge Base.
+- Furgone Aziendale: Max 1000kg.
+- Bilico Completo: Max 24000 kg (240 q).
+- Camion con Gru: Max 16000 kg (160 q).
+- Se Distanza > 200 km: Bilico richiede hotel autista (extra). Camion Gru include hotel autista.
+`;
+
 const cleanAndParseJSON = (text: string) => {
   try {
-    // Remove markdown code blocks if present
     let clean = text.replace(/```json\n/g, "").replace(/\n```/g, "").replace(/```/g, "");
-    // Locate the first '{' and last '}' to handle potential intro text
     const firstBrace = clean.indexOf('{');
     const lastBrace = clean.lastIndexOf('}');
     if (firstBrace !== -1 && lastBrace !== -1) {
@@ -30,7 +58,6 @@ const cleanAndParseJSON = (text: string) => {
   }
 };
 
-// Helper to get authenticated client or throw error
 const getClient = () => {
     const apiKey = getStoredApiKey();
     if (!apiKey) {
@@ -39,29 +66,66 @@ const getClient = () => {
     return new GoogleGenAI({ apiKey });
 };
 
+export const chatWithAgent = async (history: any[], message: string) => {
+    const ai = getClient();
+    try {
+        const chat = ai.chats.create({
+            model: "gemini-3-pro-preview",
+            history: history
+        });
+        const result = await chat.sendMessage({ message });
+        return result.text;
+    } catch (e) {
+        console.warn("Pro model failed for chat, falling back to Flash", e);
+        const chat = ai.chats.create({
+            model: "gemini-2.5-flash",
+            history: history
+        });
+        const result = await chat.sendMessage({ message });
+        return result.text;
+    }
+};
+
 export const calculateEstimate = async (
   inputs: EstimateInputs, 
+  config: AppConfig = DEFAULT_CONFIG,
   onStatusUpdate?: (status: string) => void
 ): Promise<EstimateResult> => {
   
   const ai = getClient();
 
-  // --- Step 1: Grounding (Maps & Search) ---
+  const internalTechsCount = inputs.useInternalTeam ? inputs.internalTechs : 0;
+  const externalTechsCount = inputs.useExternalTeam ? inputs.externalTechs : 0;
+  const totalTechs = internalTechsCount + externalTechsCount;
+  
+  if (totalTechs === 0) {
+      throw new Error("Devi selezionare almeno un tecnico (Interno o Esterno).");
+  }
+
+  const ballastCount = inputs.includeBallast && inputs.parkingSpots ? calculateBallastCount(inputs.parkingSpots) : 0;
+  // Note: Total weight calculation is better handled by AI using the Knowledge Base (CSV) if available, 
+  // but we pass a rough estimate here just in case.
+  const estBallastWeight = ballastCount * 1600; 
+
+  // --- Step 1: Grounding ---
   if (onStatusUpdate) onStatusUpdate("Consultazione Google Maps per distanze...");
   
   let routeInfo = "N/D";
   let searchContext = "N/D";
+  let destProvinceCode = "XX";
+  
+  // Extract province from destination string approximately
+  const provMatch = inputs.destination.match(/\b([A-Z]{2})\b/);
+  if (provMatch) destProvinceCode = provMatch[1];
 
   try {
-    // Parallel Execution with individual timeouts
     const mapsPromise = (async () => {
         try {
             const response = await ai.models.generateContent({
                 model: "gemini-2.5-flash",
-                contents: `Distance and driving time from ${inputs.origin} to ${inputs.destination}?`,
+                contents: `Distance, driving time and province code from ${inputs.origin} to ${inputs.destination}?`,
                 config: { tools: [{ googleMaps: {} }] }
             });
-            // Extract map data from chunks if available, or text
             const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
             let mapText = response.text;
             if (chunks) mapText += " " + JSON.stringify(chunks);
@@ -69,26 +133,24 @@ export const calculateEstimate = async (
         } catch (e) { console.error(e); return "Errore Mappe"; }
     })();
 
-    if (onStatusUpdate) onStatusUpdate("Analisi prezzi trasporti e hotel...");
+    if (onStatusUpdate) onStatusUpdate(`Analisi prezzi per ${totalTechs} persone...`);
     
     const searchPromise = (async () => {
         try {
-             // Contextual search based on transport mode
-             let query = `hotel prices in ${inputs.destination} for ${inputs.startDate}`;
+             let query = `prezzo medio gasolio Italia oggi, costo hotel 3 stelle a ${inputs.destination} per ${internalTechsCount} persone site:booking.com OR site:expedia.it`;
              if (inputs.transportMode === TransportMode.PUBLIC_TRANSPORT) {
-                 query += `, train and flight cost from ${inputs.origin} to ${inputs.destination}`;
+                 query += `, costo biglietto treno da ${inputs.origin} a ${inputs.destination} per ${internalTechsCount} persone site:trainline.com OR site:trenitalia.com, costo volo da aeroporto vicino a ${inputs.origin} a aeroporto vicino a ${inputs.destination} site:skyscanner.it, costo medio taxi da stazione/aeroporto a ${inputs.destination}`;
              }
              const response = await ai.models.generateContent({
                 model: "gemini-2.5-flash",
                 contents: query,
                 config: { tools: [{ googleSearch: {} }] }
             });
-            return response.text; // Search results usually in text
+            return response.text;
         } catch (e) { console.error(e); return "Errore Ricerca"; }
     })();
 
-    // Wait for data (max 15 seconds for grounding to avoid blocking everything)
-    const groundingTimeout = new Promise<[string, string]>(resolve => setTimeout(() => resolve(["Timeout Mappe", "Timeout Ricerca"]), 15000));
+    const groundingTimeout = new Promise<[string, string]>(resolve => setTimeout(() => resolve(["Timeout Mappe", "Timeout Ricerca"]), 20000));
     
     const [mapsResult, searchResult] = await Promise.race([
         Promise.all([mapsPromise, searchPromise]),
@@ -102,126 +164,145 @@ export const calculateEstimate = async (
     console.error("Grounding Error:", err);
   }
 
-  // --- Step 2: Reasoning & Calculation ---
-  if (onStatusUpdate) onStatusUpdate("Elaborazione preventivo e calcoli finali...");
+  // --- Step 2: Reasoning ---
+  if (onStatusUpdate) onStatusUpdate("Calcolo preventivo e scenari...");
+
+  let customConfigString = "";
+  if (config.customParams && Object.keys(config.customParams).length > 0) {
+      customConfigString = "\nPARAMETRI AZIENDALI AGGIUNTIVI (Dal Foglio Configurazione):\n";
+      for (const [key, data] of Object.entries(config.customParams)) {
+          customConfigString += `- ${key}: ${data.value} ${data.description ? `(${data.description})` : ''}\n`;
+      }
+  }
+
+  // Logistics Costs Injection
+  let logisticsCostsString = "Nessun dato logistico specifico per questa provincia.";
+  if (inputs.logisticsConfig && destProvinceCode) {
+      const provCosts = inputs.logisticsConfig[destProvinceCode] || inputs.logisticsConfig[Object.keys(inputs.logisticsConfig).find(k => inputs.destination.toUpperCase().includes(k)) || ''];
+      
+      if (provCosts) {
+          logisticsCostsString = `COSTI LOGISTICA PER PROVINCIA ${destProvinceCode}:\n`;
+          for (const [k, v] of Object.entries(provCosts)) {
+              logisticsCostsString += `- ${k}: €${v}\n`;
+          }
+      } else {
+          logisticsCostsString += ` (Provincia '${destProvinceCode}' non trovata nel foglio logistica)`;
+      }
+  }
+
+  let modelsSpecsString = "";
+  if (inputs.modelsConfig) {
+      modelsSpecsString = "\nKNOWLEDGE BASE MODELLI & PESI (Dal CSV Knowledge Base):\n";
+      modelsSpecsString += "Usa questi dati per calcolare pesi totali e capacità camion.\n";
+      
+      const selectedModelKey = Object.keys(inputs.modelsConfig).find(k => k.toLowerCase().includes(inputs.selectedModelId?.toLowerCase() || ''));
+      if (selectedModelKey) {
+          modelsSpecsString += `DATI SPECIFICI MODELLO SELEZIONATO (${selectedModelKey}):\n`;
+          const params = inputs.modelsConfig[selectedModelKey];
+          for (const [key, val] of Object.entries(params)) {
+              modelsSpecsString += `- ${key}: ${val}\n`;
+          }
+      } else {
+          modelsSpecsString += "Modello selezionato non trovato esplicitamente nel CSV, usa stime prudenziali o cerca 'Solarflex' come base.\n";
+      }
+  }
 
   const prompt = `
-    Sei un esperto agente di stima costi per interventi tecnici.
+    Sei "OptiCost", l'agente esperto di preventivazione per Pergosolar.
     
-    INPUT DATI:
-    - Origine: ${inputs.origin}
-    - Destinazione: ${inputs.destination}
-    - Escludi Trasferimento Iniziale HQ: ${inputs.excludeOriginTransfer ? "SI (Tecnici accompagnati gratis in stazione)" : "NO (Calcola taxi/mezzi da HQ a stazione/aeroporto)"}
-    - Tipo Servizio: ${inputs.serviceType}
+    OBIETTIVO:
+    Calcolare i costi rigorosi per l'installazione.
+    
+    DATI INPUT:
+    - Origine (HQ): ${inputs.origin}
+    - Destinazione: ${inputs.destination} (Provincia: ${destProvinceCode})
     - Modalità: ${inputs.transportMode}
-    - Data: ${inputs.startDate}
-    - Durata: ${inputs.durationDays} giorni
-    - Margine Richiesto: ${inputs.marginPercent}%
-    - Note: ${inputs.additionalNotes}
+    - Squadra INTERNA: ${inputs.internalTechs} persone.
+    - Squadra ESTERNA: ${inputs.externalTechs} persone.
+    - Modello: ${inputs.selectedModelId} (Posti: ${inputs.parkingSpots})
+    - Zavorre: ${ballastCount} (Stima peso: ${estBallastWeight} kg)
+    - Muletto Cliente: ${inputs.hasForklift ? 'Sì' : 'No'}
+    - Ore Man-Hour Totali Stimate dal sistema: ${inputs.calculatedHours} (Usa questo come base lavoro)
+    - Rientro nel Weekend? ${inputs.returnOnWeekends ? 'Sì' : 'No'}
 
-    DATI CONTESTO (DAL WEB/MAPS):
-    - Info Percorso: ${routeInfo}
-    - Info Prezzi/Logistica: ${searchContext}
-    - Costanti Aziendali: ${COST_CONSTANTS}
-
-    RICHIESTA:
-    Genera un preventivo JSON rigoroso.
+    REGOLE DI BUSINESS:
+    ${BASE_BUSINESS_RULES}
+    ${LOGISTICS_RULES}
     
-    REGOLE CATEGORIE COSTI (IMPORTANTE):
-    Ogni voce di costo ("breakdown") DEVE appartenere ESCLUSIVAMENTE a una di queste 3 categorie esatte:
-    1. "Lavoro" -> (Costo orario tecnici per ore lavorate + ore viaggio).
-    2. "Viaggio" -> (Biglietti aereo/treno, taxi, metro, pedaggi, carburante, usura auto).
-    3. "Vitto/Alloggio" -> (Hotel, diarie pasti).
-    
-    NON inventare altre categorie. Raggruppa tutto in queste tre.
+    ${customConfigString}
+    ${logisticsCostsString}
+    ${modelsSpecsString}
 
-    Se la modalità è "Mezzi Pubblici", DEVI generare ALMENO 2 opzioni nell'array 'options':
-    1. Opzione Treno (se fattibile) + Transfer locale
-    2. Opzione Aereo (se fattibile) + Transfer locale
-    Se la distanza è breve, l'aereo potrebbe non esserci, usa solo Treno o Bus.
-    
-    Nel calcolo "Viaggio", se "Escludi Trasferimento Iniziale HQ" è SI, NON mettere costi per arrivare alla stazione di partenza.
+    LOGICA LOGISTICA (CRUCIALE):
+    1. Calcola il PESO TOTALE del materiale (Struttura + Zavorre) usando i dati della Knowledge Base se disponibili (es. PESO_STRUTTURA, PESO_ZAVORRE).
+    2. Determina i mezzi necessari (Furgone, Bilico, Camion Gru) basandoti sui limiti di peso (240q, 160q).
+    3. Se ci sono Zavorre e il cliente NON ha il muletto, DEVI inserire il costo NOLEGGIO MULETTO (700€ base).
 
-    OUTPUT JSON SCHEMA:
+    LOGICA SCENARI (COSTI INTERVENTO):
+    
+    SCENARIO A: SQUADRA INTERNA
+    - Calcola Viaggio (Km * CostoKm + Autostrada + Tempo Tecnici).
+    - Hotel se giorni > 1.
+    - Spostamenti locali: (15km * 4 * giorni) * costo km.
+    - Se "Rientro nel Weekend" è attivo e durata > 5gg, calcola viaggi A/R extra.
+
+    SCENARIO B: SQUADRA ESTERNA
+    - (Ore Totali * Tariffa Oraria Esterna).
+    - STOP. Nessun costo viaggio, hotel o vitto per esterni.
+
+    OUTPUT JSON:
     {
       "options": [
         {
-          "id": "opt1",
-          "methodName": "Nome Metodo (es. Treno + Taxi)",
-          "logisticsSummary": "Descrizione breve itinerario (es. Frecciarossa fino a Milano C.le, poi Taxi 15min)",
+          "id": "opt_1",
+          "methodName": "Descrizione Metodo (es. 1 Camion Gru + Furgone Squadra Interna)",
+          "logisticsSummary": "Dettaglio peso tot, mezzi scelti, regola autista, regola muletto, regola week-end",
           "breakdown": [
-            { "category": "Viaggio", "description": "Biglietto Treno A/R", "amount": 100.00 },
-            { "category": "Lavoro", "description": "2 Tecnici x 8 ore x 2 giorni", "amount": 200.00 },
-            { "category": "Vitto/Alloggio", "description": "Hotel 2 notti", "amount": 150.00 }
+            { "category": "Lavoro", "description": "...", "amount": 0 },
+            { "category": "Viaggio", "description": "...", "amount": 0 },
+            { "category": "Vitto/Alloggio", "description": "...", "amount": 0 }
           ],
-          "totalCost": 450.00,
-          "salesPrice": 585.00,
-          "marginAmount": 135.00
+          "totalCost": 0,
+          "salesPrice": 0,
+          "marginAmount": 0
         }
       ],
-      "commonReasoning": "Spiegazione generale delle scelte fatte"
+      "commonReasoning": "Spiegazione logica scelte."
     }
   `;
 
-  // Set a hard timeout for the reasoning phase (120 seconds)
-  const timeoutPromise = new Promise((_, reject) => 
-    setTimeout(() => reject(new Error("Tempo di elaborazione scaduto (Timeout)")), 120000)
-  );
-
-  const generationPromise = ai.models.generateContent({
-    model: "gemini-3-pro-preview",
-    contents: prompt,
-    config: {
-        responseMimeType: "application/json",
-        thinkingConfig: { thinkingBudget: 8192 } // Reduced slightly for speed, still high reasoning
-    }
-  });
-
   try {
-      const response: any = await Promise.race([generationPromise, timeoutPromise]);
-      
-      if (onStatusUpdate) onStatusUpdate("Finalizzazione dati...");
-      const json = cleanAndParseJSON(response.text);
-      
-      // Sanitize numbers
-      json.options = json.options.map((opt: any) => ({
-          ...opt,
-          totalCost: Number(opt.totalCost) || 0,
-          salesPrice: Number(opt.salesPrice) || 0,
-          marginAmount: Number(opt.marginAmount) || 0,
-          breakdown: Array.isArray(opt.breakdown) ? opt.breakdown.map((b: any) => ({
-              ...b,
-              amount: Number(b.amount) || 0
-          })) : []
-      }));
+    const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Timeout calcolo AI (120s).")), 120000)
+    );
 
-      return json;
+    const generatePromise = ai.models.generateContent({
+      model: "gemini-3-pro-preview",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        thinkingConfig: { thinkingBudget: 4096 }
+      }
+    });
 
-  } catch (error: any) {
-      console.error("Generation Error:", error);
-      throw new Error(error.message || "Errore durante la generazione del preventivo.");
-  }
-};
-
-export const chatWithAgent = async (history: any[], message: string) => {
-    const ai = getClient();
+    const response = await Promise.race([generatePromise, timeoutPromise]) as any;
     
-    // Try with Pro first
-    try {
-        const chat = ai.chats.create({
-            model: "gemini-3-pro-preview",
-            history: history
+    console.log("AI Response:", response.text);
+    const parsed = cleanAndParseJSON(response.text);
+
+    parsed.options.forEach((opt: any) => {
+        opt.totalCost = Number(opt.totalCost) || 0;
+        opt.salesPrice = Number(opt.salesPrice) || 0;
+        opt.marginAmount = Number(opt.marginAmount) || 0;
+        opt.breakdown.forEach((item: any) => {
+            item.amount = Number(item.amount) || 0;
         });
-        const result = await chat.sendMessage(message);
-        return result.text;
-    } catch (e) {
-        console.warn("Gemini Pro Chat failed, falling back to Flash", e);
-        // Fallback to Flash if Pro fails (e.g. rate limit, stability)
-        const chatFlash = ai.chats.create({
-            model: "gemini-2.5-flash",
-            history: history
-        });
-        const result = await chatFlash.sendMessage(message);
-        return result.text;
-    }
+    });
+
+    return parsed;
+
+  } catch (e: any) {
+    console.error("AI Generation Error:", e);
+    throw new Error(`Errore calcolo AI: ${e.message}`);
+  }
 };

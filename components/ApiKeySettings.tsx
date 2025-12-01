@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Key, Save, AlertTriangle, ExternalLink, X } from 'lucide-react';
+import { Key, Save, ExternalLink, X, Check } from 'lucide-react';
 import { getStoredApiKey, setStoredApiKey } from '../services/storage';
 
 interface Props {
@@ -14,14 +14,15 @@ const ApiKeySettings: React.FC<Props> = ({ isOpen, onClose }) => {
 
   useEffect(() => {
     if (isOpen) {
-      const current = getStoredApiKey();
-      if (current) setKey(current);
+      const currentKey = getStoredApiKey();
+      if (currentKey) setKey(currentKey);
     }
   }, [isOpen]);
 
   const handleSave = () => {
     if (!key.trim()) return;
     setStoredApiKey(key.trim());
+    
     setIsSaved(true);
     setTimeout(() => {
       setIsSaved(false);
@@ -33,7 +34,7 @@ const ApiKeySettings: React.FC<Props> = ({ isOpen, onClose }) => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-lg mx-4 relative">
+      <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md mx-4 relative">
         <button 
             onClick={onClose}
             className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
@@ -46,72 +47,56 @@ const ApiKeySettings: React.FC<Props> = ({ isOpen, onClose }) => {
             <Key className="w-6 h-6 text-blue-600" />
           </div>
           <div>
-            <h2 className="text-xl font-bold text-slate-800">Configurazione Chiave API</h2>
-            <p className="text-sm text-slate-500">Collega il tuo account Google per utilizzare l'app.</p>
+            <h2 className="text-xl font-bold text-slate-800">Impostazioni</h2>
+            <p className="text-sm text-slate-500">Gestisci Chiave API</p>
           </div>
         </div>
 
-        <div className="space-y-4">
-          <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 text-sm text-blue-800">
-            <p className="flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-              <span>
-                Per utilizzare questo strumento è necessaria una <strong>Gemini API Key</strong>. 
-                I costi di utilizzo verranno addebitati sul tuo account Google Cloud (se superi la soglia gratuita).
-              </span>
-            </p>
-          </div>
+        <div className="space-y-5">
+            <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    Google Gemini API Key <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                    <input
+                        type="password"
+                        value={key}
+                        onChange={(e) => setKey(e.target.value)}
+                        placeholder="Incolla qui la tua API Key..."
+                        className="w-full p-3 pl-10 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
+                    />
+                    <Key className="w-5 h-5 text-slate-400 absolute left-3 top-3" />
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                    Necessaria per generare i preventivi.
+                </p>
+            </div>
+            
+            <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs text-slate-500">
+                <p><strong>Nota:</strong> Le configurazioni dei fogli Google (Tariffe, Modelli, Logistica) sono gestite centralmente e non richiedono inserimento manuale.</p>
+            </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-semibold text-slate-700">Inserisci la tua API Key</label>
-            <input
-              type="password"
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              placeholder="AIzaSy..."
-              className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-sm"
-            />
-          </div>
-
-          <div className="text-xs text-slate-500 flex justify-between items-center pt-2">
-             <span>Non hai una chiave?</span>
-             <a 
-                href="https://aistudio.google.com/app/apikey" 
-                target="_blank" 
-                rel="noreferrer"
-                className="flex items-center gap-1 text-blue-600 hover:underline font-medium"
-             >
-                Ottienila qui <ExternalLink className="w-3 h-3" />
-             </a>
-          </div>
-
-          <button
-            onClick={handleSave}
-            disabled={!key.trim()}
-            className={`w-full py-3 rounded-lg font-semibold flex items-center justify-center gap-2 transition-all mt-4 ${
-              isSaved 
-                ? 'bg-green-600 text-white' 
-                : 'bg-slate-900 text-white hover:bg-slate-800'
-            }`}
-          >
-            {isSaved ? <CheckLabel /> : <SaveLabel />}
-          </button>
+            <button
+                onClick={handleSave}
+                disabled={!key.trim()}
+                className={`w-full py-3 px-4 rounded-lg font-bold text-white flex items-center justify-center gap-2 transition-all shadow-md ${
+                    isSaved ? 'bg-green-600' : 'bg-blue-600 hover:bg-blue-700'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+                {isSaved ? (
+                    <>
+                        <Check className="w-5 h-5" /> Salvato!
+                    </>
+                ) : (
+                    <>
+                        <Save className="w-5 h-5" /> Salva Impostazioni
+                    </>
+                )}
+            </button>
         </div>
       </div>
     </div>
   );
 };
-
-const SaveLabel = () => (
-    <>
-        <Save className="w-4 h-4" /> Salva e Continua
-    </>
-);
-
-const CheckLabel = () => (
-    <>
-        Chiave Salvata!
-    </>
-);
 
 export default ApiKeySettings;
