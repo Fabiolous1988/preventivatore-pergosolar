@@ -7,6 +7,16 @@ interface CostChartProps {
   items: CostItem[];
 }
 
+const COLORS_PALETTE = [
+  '#3b82f6', // Blue
+  '#10b981', // Emerald
+  '#f59e0b', // Amber
+  '#8b5cf6', // Violet
+  '#ec4899', // Pink
+  '#06b6d4', // Cyan
+  '#84cc16', // Lime
+];
+
 const CostChart: React.FC<CostChartProps> = ({ items }) => {
   // Aggregate by category
   const data = items.reduce((acc, item) => {
@@ -22,12 +32,15 @@ const CostChart: React.FC<CostChartProps> = ({ items }) => {
   }, [] as { name: string; value: number }[]);
 
   // Vivid Color mapping
-  const getColor = (name: string) => {
+  const getColor = (name: string, index: number) => {
       const lower = name.toLowerCase();
       if (lower.includes('lavoro') || lower.includes('manodopera')) return '#3b82f6'; // Vivid Blue
       if (lower.includes('viaggio') || lower.includes('trasport')) return '#10b981'; // Vivid Emerald
       if (lower.includes('vitto') || lower.includes('alloggio') || lower.includes('hotel')) return '#f59e0b'; // Vivid Amber
-      return '#64748b'; // Slate for others
+      if (lower.includes('material') || lower.includes('muletto')) return '#8b5cf6'; // Vivid Violet
+      
+      // Fallback to palette loop for unknown categories
+      return COLORS_PALETTE[index % COLORS_PALETTE.length];
   };
 
   return (
@@ -43,7 +56,7 @@ const CostChart: React.FC<CostChartProps> = ({ items }) => {
             dataKey="value"
           >
             {data.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={getColor(entry.name)} />
+              <Cell key={`cell-${index}`} fill={getColor(entry.name, index)} />
             ))}
           </Pie>
           <Tooltip 

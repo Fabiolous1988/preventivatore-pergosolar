@@ -15,11 +15,15 @@ export const PERGOLA_MODELS: PergolaModel[] = [
 
 export const calculateBallastCount = (spots: number): number => {
     if (spots <= 0) return 0;
-    // Logic: Starts at 2. Every 2 spots adds 1.
-    // 1-2 spots = 2
-    // 3-4 spots = 3
-    // 5-6 spots = 4
     return Math.ceil(spots / 2) + 1;
+};
+
+// LOOKUP HELPER
+const getVal = (params: Record<string, number>, possibleKeys: string[]): number => {
+    for (const key of possibleKeys) {
+        if (params[key] !== undefined && !isNaN(params[key])) return params[key];
+    }
+    return 0;
 };
 
 export const calculateInstallationHours = (
@@ -31,57 +35,56 @@ export const calculateInstallationHours = (
     modelsConfig: ModelsConfig | null
 ): number => {
     if (!modelId || spots <= 0) return 0;
-    
-    // Find model name from ID to look up in config
+    if (!modelsConfig) return 0;
+
     const modelDef = PERGOLA_MODELS.find(m => m.id === modelId);
-    const modelName = modelDef?.name || modelId; // Try to match by name found in CSV
+    const searchName = (modelDef?.name || modelId).toUpperCase().trim();
 
-    let hoursPerSpot = 0;
+    // Fix: Sort keys by length descending. 
+    // This ensures "SOLARFLEX MAXI" (length 14) is checked before "SOLARFLEX" (length 9).
+    const availableKeys = Object.keys(modelsConfig).sort((a, b) => b.length - a.length);
 
-    if (modelsConfig) {
-        // Try to find the model in the loaded config
-        // We look for exact match or case-insensitive match (CSV key might be MODELLO_STRUTTURA)
-        const configKey = Object.keys(modelsConfig).find(k => k.toLowerCase() === modelName.toLowerCase());
-        
-        // If exact name match fails, maybe the CSV uses ID or partial name
-        const params = configKey ? modelsConfig[configKey] : null;
-
-        if (params) {
-            // Found model in CSV, sum up relevant columns based on new specs
-            
-            // 1. Structure (Base) -> ORE_INSTALLAZIONE_1PA
-            const structureBase = params['ORE_INSTALLAZIONE_1PA'] || 0;
-            hoursPerSpot += structureBase;
-
-            // 2. PV Logic
-            if (includePV) {
-                // Determine which PV column to use
-                if (includeGaskets) {
-                    // Try ORE_INSTALLAZIONE_1PA_PF_GUARNIZIONI
-                    const pvGasket = params['ORE_INSTALLAZIONE_1PA_PF_GUARNIZIONI'] || 0;
-                    hoursPerSpot += pvGasket;
-                } else {
-                    // Try ORE_INSTALLAZIONE_1PA_PF
-                    const pvStd = params['ORE_INSTALLAZIONE_1PA_PF'] || 0;
-                    hoursPerSpot += pvStd;
-                }
-            }
-
-            // 3. Ballast (Zavorre) -> ORE_INSTALLAZIONE_ZAVORRE
-            if (includeBallast) {
-                const ballast = params['ORE_INSTALLAZIONE_ZAVORRE'] || 0;
-                hoursPerSpot += ballast;
-            }
-
-        } else {
-            // Fallback if model not in CSV
-            console.warn(`Model ${modelName} not found in configuration sheet.`);
-            hoursPerSpot = 5; // Fallback
-        }
-    } else {
-        // No config loaded, fallback default
-        hoursPerSpot = 5;
+    // 1. Try EXACT Match
+    let configKey = availableKeys.find(k => k === searchName);
+    
+    // 2. If no exact match, try inclusion (still sorted by length desc)
+    if (!configKey) {
+        configKey = availableKeys.find(k => searchName.includes(k) || k.includes(searchName));
+    }
+    
+    if (!configKey) {
+        console.warn(`[Calculator] Model ${searchName} not found in CSV keys:`, availableKeys.slice(0, 5));
+        return 0;
     }
 
-    return hoursPerSpot * spots;
+    const row = modelsConfig[configKey];
+    console.log(`[Calculator] Selected Row for ${searchName} (Matched Key: ${configKey}):`, row);
+
+    // --- EXACT COLUMN MAPPING (Based on user instruction) ---
+    
+    // 1. BASE: "ORE_INSTALLAZIONE_1PA"
+    const base = getVal(row, ['ORE_INSTALLAZIONE_1PA', 'ORE_INSTALLAZIONE_1_PA']);
+    
+    // 2. PV: "ORE_INSTALLAZIONE_1PA_PF"
+    const pv = includePV ? getVal(row, ['ORE_INSTALLAZIONE_1PA_PF', 'ORE_PV_1PA']) : 0;
+    
+    // 3. GASKETS: "ORE_INSTALLAZIONE_1PA_PF_GUARNIZIONI"
+    const gaskets = includeGaskets ? getVal(row, ['ORE_INSTALLAZIONE_1PA_PF_GUARNIZIONI', 'ORE_GUARNIZIONI_1PA']) : 0;
+    
+    // 4. BALLAST: "ORE_INSTALLAZIONE_ZAVORRE" (Time for 2 ballasts)
+    let ballastTotalTime = 0;
+    if (includeBallast) {
+        const numBallasts = calculateBallastCount(spots);
+        const timeFor2 = getVal(row, ['ORE_INSTALLAZIONE_ZAVORRE', 'ORE_ZAVORRE']);
+        // If csv says "1.50" for 2 ballasts, and we have 4 ballasts -> (4/2)*1.5 = 3 hours
+        ballastTotalTime = (numBallasts / 2) * timeFor2;
+    }
+
+    // Formula: (Base + PV + Gaskets) * spots + BallastTime
+    // Note: PV and Gaskets are usually additive PER SPOT in the sheet logic described
+    const total = (base * spots) + (pv * spots) + (gaskets * spots) + ballastTotalTime;
+    
+    console.log(`[Calc Details] Model:${configKey} Spots:${spots} | Base:${base} PV:${pv} Gask:${gaskets} BallastTime:${ballastTotalTime} -> TOTAL:${total}`);
+    
+    return Math.round(total * 100) / 100;
 };
