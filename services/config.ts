@@ -44,7 +44,7 @@ const parseFloatItalian = (input: any): number => {
 
     // Italian format check: if comma exists and is the last separator-like char, treat as decimal
     // But be careful with 1.000,00 vs 1,000.00
-    // Simple heuristic: replace ',' with '.'
+    // Simple heuristic: if there is a comma, replace it with dot
     if (str.includes(',')) {
         str = str.replace(',', '.');
     }
@@ -175,7 +175,8 @@ export const fetchModelsConfig = async (): Promise<ModelsConfig | null> => {
                 modelParams[h] = val;
             });
             
-            // Key the map by raw model name (uppercase) for now, standardisation happens in calculator
+            // Key the map by raw model name (uppercase)
+            // We store it exactly as found in CSV for debug, but calculator will normalize keys
             modelsConfig[modelName.toUpperCase()] = modelParams;
         }
 

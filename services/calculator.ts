@@ -2,16 +2,10 @@
 import { PergolaModel, ModelsConfig } from "../types";
 
 // Base metadata for known models to keep UI nice (categories, lifting rules)
-// We will merge this with the dynamic CSV data.
 const STATIC_METADATA: Record<string, Partial<PergolaModel>> = {
-    'solarflex': { category: 'Solarflex', requiresLifting: false },
-    'solarflex_maxi': { category: 'Solarflex', requiresLifting: false },
-    'solarflex_urano': { category: 'Solarflex', requiresLifting: false },
-    'solarflex_urano_twin': { category: 'Solarflex', requiresLifting: false },
-    'centauro_corporate': { category: 'Corporate', requiresLifting: true, liftingType: 'Mezzo Sollevamento' },
-    'centauro_corporate_twin': { category: 'Corporate', requiresLifting: true, liftingType: 'Mezzo Sollevamento' },
-    'solarflex_truck': { category: 'Automotive', requiresLifting: false },
-    'solarflex_camper': { category: 'Automotive', requiresLifting: false },
+    'solarflex': { category: 'Solarflex' },
+    'centauro': { category: 'Corporate' },
+    // Add generic category matching here if needed
 };
 
 // HELPER: Normalize string for comparison (remove ALL spaces, symbols, lowercase)
@@ -20,44 +14,33 @@ export const normalize = (str: string) => str.replace(/[^a-z0-9]/gi, '').toLower
 // Generates the official list of models directly from the loaded CSV config
 export const getDynamicModelList = (modelsConfig: ModelsConfig | null): PergolaModel[] => {
     if (!modelsConfig) {
-        // Fallback to basic static list if no config loaded
-        return Object.entries(STATIC_METADATA).map(([id, meta]) => ({
-            id,
-            name: id.replace(/_/g, ' ').toUpperCase(), // Fallback name
-            category: meta.category || 'Standard',
-            allowsStructure: true,
-            allowsPV: true,
-            allowsGaskets: true,
-            requiresLifting: !!meta.requiresLifting,
-            liftingType: meta.liftingType
-        }));
+        return [];
     }
 
-    // Generate list from CSV Keys
-    return Object.keys(modelsConfig).map(modelKey => {
-        const row = modelsConfig[modelKey];
-        const normKey = normalize(modelKey);
-        
-        // Try to find static metadata match based on fuzzy name check
-        const knownId = Object.keys(STATIC_METADATA).find(id => normalize(id) === normKey || normKey.includes(normalize(id)));
-        const meta = knownId ? STATIC_METADATA[knownId] : {};
+    return Object.keys(modelsConfig)
+        // Filter out Ballasts (ZAVORRE) from the main model list
+        .filter(key => !key.includes('ZAVORRA'))
+        .map(modelKey => {
+            const row = modelsConfig[modelKey];
+            
+            const hasPV = getVal(row, ['ORE_INSTALLAZIONE_1PA_PF', 'ORE_PV_1PA']) > 0;
+            const hasGaskets = getVal(row, ['ORE_INSTALLAZIONE_1PA_PF_GUARNIZIONI', 'ORE_GUARNIZIONI_1PA']) > 0;
+            
+            return {
+                id: modelKey,
+                name: modelKey, 
+                category: 'Generale',
+                allowsStructure: true,
+                allowsPV: hasPV || true, 
+                allowsGaskets: hasGaskets || true,
+                requiresLifting: false, 
+            };
+        });
+};
 
-        // Infer capabilities from CSV Columns
-        // If column exists and value > 0, then feature is allowed
-        const hasPV = getVal(row, ['ORE_INSTALLAZIONE_1PA_PF', 'ORE_PV_1PA']) > 0;
-        const hasGaskets = getVal(row, ['ORE_INSTALLAZIONE_1PA_PF_GUARNIZIONI', 'ORE_GUARNIZIONI_1PA']) > 0;
-        
-        return {
-            id: modelKey, // THE ID IS NOW THE EXACT CSV KEY
-            name: modelKey, // Display Name matches CSV exactly (includes typos like URALNO, which ensures matching works)
-            category: meta.category || 'Generale',
-            allowsStructure: true,
-            allowsPV: hasPV || true, // Default true if column missing, or check logic
-            allowsGaskets: hasGaskets || true,
-            requiresLifting: !!meta.requiresLifting,
-            liftingType: meta.liftingType
-        };
-    });
+export const getBallastList = (modelsConfig: ModelsConfig | null): string[] => {
+    if (!modelsConfig) return [];
+    return Object.keys(modelsConfig).filter(key => key.includes('ZAVORRA'));
 };
 
 export const calculateBallastCount = (spots: number): number => {
@@ -74,27 +57,42 @@ const getVal = (params: Record<string, number>, possibleKeys: string[]): number 
 };
 
 export const calculateInstallationHours = (
-    modelId: string, // This will now be the EXACT CSV KEY
+    modelId: string, 
     spots: number, 
     includePV: boolean, 
     includeGaskets: boolean,
     includeBallast: boolean,
+    selectedBallastId: string | undefined,
     modelsConfig: ModelsConfig | null
 ): number => {
     if (!modelId || spots <= 0) return 0;
     if (!modelsConfig) return 0;
 
-    // DIRECT LOOKUP
-    // Since dropdown ID = CSV Key, we don't need fuzzy matching anymore!
-    const row = modelsConfig[modelId];
-    
-    if (!row) {
+    const normTarget = normalize(modelId);
+    const availableKeys = Object.keys(modelsConfig);
+
+    // --- EXACT MATCH LOGIC (PRIORITY) ---
+    // 1. Try absolute strict equality on normalized strings
+    let matchedKey = availableKeys.find(k => normalize(k) === normTarget);
+
+    // 2. If not found, sort by length desc and find first inclusion
+    // This solves "Solarflex Urano Twin" vs "Solarflex Urano"
+    if (!matchedKey) {
+        const sortedKeys = [...availableKeys].sort((a, b) => b.length - a.length);
+        matchedKey = sortedKeys.find(k => {
+            const nK = normalize(k);
+            return nK === normTarget || nK.includes(normTarget) || normTarget.includes(nK);
+        });
+    }
+
+    if (!matchedKey) {
         console.warn(`[Calculator] Model "${modelId}" not found in CSV keys.`);
         return 0;
     }
 
-    console.log(`[Calculator] Exact Match Found for "${modelId}"`);
-
+    console.log(`[Calculator] Matching "${modelId}" -> "${matchedKey}"`);
+    const row = modelsConfig[matchedKey];
+    
     // --- EXACT COLUMN MAPPING ---
     const base = getVal(row, ['ORE_INSTALLAZIONE_1PA']);
     const pv = includePV ? getVal(row, ['ORE_INSTALLAZIONE_1PA_PF']) : 0;
@@ -104,10 +102,29 @@ export const calculateInstallationHours = (
     let ballastTotalTime = 0;
     if (includeBallast) {
         const numBallasts = calculateBallastCount(spots);
-        const timeFor2 = getVal(row, ['ORE_INSTALLAZIONE_ZAVORRE']);
-        // Logic: timeFor2 is for 2 ballasts. 
+        
+        // Determine Ballast Time
+        // Try to look up the SPECIFIC BALLAST ROW first
+        let timeFor2 = 0;
+        
+        if (selectedBallastId) {
+             const normBallast = normalize(selectedBallastId);
+             const ballastKey = availableKeys.find(k => normalize(k) === normBallast);
+             if (ballastKey) {
+                 const ballastRow = modelsConfig[ballastKey];
+                 timeFor2 = getVal(ballastRow, ['ORE_INSTALLAZIONE_ZAVORRE']);
+             }
+        }
+
+        // Fallback: Check if the Pergola Row has a generic ballast time
+        if (timeFor2 === 0) {
+             timeFor2 = getVal(row, ['ORE_INSTALLAZIONE_ZAVORRE']);
+        }
+
+        // Logic: timeFor2 is for 2 ballasts (1 PA usually needs 2 ballasts approx, but user said "ore per 2 zavorre")
         if (timeFor2 > 0) {
-            const pairs = Math.ceil(numBallasts / 2);
+            // How many pairs of ballasts?
+            const pairs = numBallasts / 2; // Can be decimal? usually time is proportional
             ballastTotalTime = pairs * timeFor2; 
         }
     }

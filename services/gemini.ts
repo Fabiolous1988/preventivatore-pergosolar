@@ -9,7 +9,7 @@ const BASE_BUSINESS_RULES = `
 - soglia_distanza_trasferta_km: 150 km
 - indennita_trasferta_giornaliera_per_tecnico: €50.00
 - soglia_minima_ore_lavoro_utili: 2 ore (residue dopo viaggio)
-- ore_lavoro_giornaliere_standard: 9 ore (massimo in cantiere)
+- ore_lavoro_giornaliere_standard: 8 ore (massimo in cantiere)
 - ore_totali_giornata_porta_porta: 10 ore (Viaggio + Lavoro)
 - km_per_litro_furgone: 11 km/l
 - costo_usura_mezzo_euro_km: €0.037/km
@@ -225,6 +225,7 @@ export const calculateEstimate = async (
     - Muletto Cliente (già in loco): ${inputs.hasForklift ? 'Sì' : 'No'}
     - Ore Man-Hour Totali Stimate dal sistema: ${inputs.calculatedHours} (Usa questo come base lavoro)
     - Rientro nel Weekend? ${inputs.returnOnWeekends ? 'Sì' : 'No'}
+    - Sconto Cliente Applicabile (Quantità): ${inputs.discountPercent || 0}%
     - Note Aggiuntive: ${inputs.additionalNotes}
 
     METRICHE NASCOSTE (DA USARE MA NON RIVELARE):
@@ -255,6 +256,12 @@ export const calculateEstimate = async (
     - Controlla se l'intervallo di date (${inputs.startDate} per ${inputs.durationDays} giorni) include sabati/domeniche.
     - Se sì E "Rientro nel Weekend" è attivo, applica i costi di viaggio A/R extra.
     - Se no (es. lunedì-venerdì), ignora l'opzione Rientro Weekend.
+    
+    LOGICA SCONTO (OTTIMIZZAZIONE PREZZO):
+    - Calcola il Costo Totale.
+    - Calcola il Margine Target per ottenere il Prezzo di Vendita Lordo.
+    - Se è presente uno "Sconto Cliente Applicabile" (>0%), applicalo al Prezzo di Vendita Lordo per ottenere il Prezzo di Vendita Finale.
+    - Mostra chiaramente che è stato applicato uno sconto volume nel reasoning, ma il salesPrice finale deve essere quello scontato.
 
     SCENARIO A: SQUADRA INTERNA
     - Calcola Viaggio (Km * CostoKm + Autostrada + Tempo Tecnici).

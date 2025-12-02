@@ -18,6 +18,7 @@ export interface EstimateInputs {
   startDate: string;
   durationDays: number; // Used for Support modes or calculated from hours
   marginPercent: number; // Hidden from user, populated from config
+  discountPercent?: number; // New: Volume discount
   additionalNotes: string;
   // Manual Extra Costs - Hidden from user, populated from config
   extraHourlyCost: number;
