@@ -42,9 +42,9 @@ const parseFloatItalian = (input: any): number => {
     
     if (str === '') return 0;
 
-    // Italian format check: comma is decimal separator if it appears at the end (decimals) 
-    // AND there are no other points complicating things, OR if we see a comma and no points.
-    // Robust strategy: replace comma with point
+    // Italian format check: if comma exists and is the last separator-like char, treat as decimal
+    // But be careful with 1.000,00 vs 1,000.00
+    // Simple heuristic: replace ',' with '.'
     if (str.includes(',')) {
         str = str.replace(',', '.');
     }
@@ -175,7 +175,7 @@ export const fetchModelsConfig = async (): Promise<ModelsConfig | null> => {
                 modelParams[h] = val;
             });
             
-            // Key the map by UPPERCASE model name for easier lookup
+            // Key the map by raw model name (uppercase) for now, standardisation happens in calculator
             modelsConfig[modelName.toUpperCase()] = modelParams;
         }
 

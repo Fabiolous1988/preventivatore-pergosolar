@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
-import { EstimateInputs, ServiceType, TransportMode, ModelsConfig, LogisticsConfig } from '../types';
-import { PERGOLA_MODELS, calculateInstallationHours, calculateBallastCount } from '../services/calculator';
+import { EstimateInputs, ServiceType, TransportMode, ModelsConfig, LogisticsConfig, PergolaModel } from '../types';
+import { calculateInstallationHours, calculateBallastCount, normalize, getDynamicModelList } from '../services/calculator';
 import { Loader2, MapPin, Calendar, Truck, UserCog, Building2, LayoutGrid, CarFront, ArrowDownCircle, Users, CheckSquare, Weight, BoxSelect, RefreshCw, Calculator, Bug, Eye } from 'lucide-react';
 
 interface Props {
@@ -32,7 +32,10 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
   const [useExternalTeam, setUseExternalTeam] = useState(false);
   const [externalTechs, setExternalTechs] = useState(1);
 
-  const [selectedModelId, setSelectedModelId] = useState<string>('solarflex');
+  // Dynamic Model List
+  const [availableModels, setAvailableModels] = useState<PergolaModel[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState<string>('');
+
   const [parkingSpots, setParkingSpots] = useState<number>(2);
   const [includePV, setIncludePV] = useState<boolean>(false);
   const [includeGaskets, setIncludeGaskets] = useState<boolean>(false);
@@ -49,7 +52,17 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
     additionalNotes: 'Necessarie stanze singole per alloggio tecnici.',
   });
 
-  const selectedModel = PERGOLA_MODELS.find(m => m.id === selectedModelId);
+  // Update available models when config loads
+  useEffect(() => {
+    const list = getDynamicModelList(modelsConfig);
+    setAvailableModels(list);
+    // Select first model by default if current selection is invalid
+    if (list.length > 0 && (!selectedModelId || !list.find(m => m.id === selectedModelId))) {
+        setSelectedModelId(list[0].id);
+    }
+  }, [modelsConfig]);
+
+  const selectedModel = availableModels.find(m => m.id === selectedModelId);
   const ballastCount = includeBallast ? calculateBallastCount(parkingSpots) : 0;
 
   const performCalculation = () => {
@@ -208,10 +221,14 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
             <div className="space-y-1">
                 <label className="text-xs font-medium text-slate-600">Modello Struttura</label>
                 <select value={selectedModelId} onChange={(e) => setSelectedModelId(e.target.value)} className="w-full p-2 border border-slate-300 rounded text-sm">
-                    {PERGOLA_MODELS.map(m => (
+                    {availableModels.length === 0 && <option value="">Caricamento...</option>}
+                    {availableModels.map(m => (
                         <option key={m.id} value={m.id}>{m.name}</option>
                     ))}
                 </select>
+                <div className="text-[10px] text-slate-400 font-mono">
+                    ID: {selectedModelId}
+                </div>
             </div>
 
             <div className="space-y-1">
@@ -272,7 +289,7 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
                    </span>
                 </span>
                 {calculatedHours === 0 && (
-                    <span className="text-red-500 ml-2 animate-pulse">(Errore: dati non trovati nel CSV?)</span>
+                    <span className="text-red-500 ml-2 animate-pulse">(Nessun match o 0 ore)</span>
                 )}
             </div>
              
@@ -306,20 +323,28 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
           <div className="bg-slate-100 p-4 rounded overflow-auto max-h-80 font-mono text-slate-700">
               <p><strong>Status Caricamento:</strong> {modelsConfig ? `✅ Caricati ${Object.keys(modelsConfig).length} modelli` : '❌ NON CARICATI'}</p>
               
+              <div className="my-2 p-2 bg-yellow-50 border border-yellow-200 rounded">
+                <p><strong>Modello Selezionato (ID Esatto):</strong> "{selectedModelId}"</p>
+                <p>Questo ID viene usato per cercare la riga nel CSV. La corrispondenza è esatta.</p>
+              </div>
+
               {modelsConfig && (
                   <div className="mt-4">
-                      <p className="font-bold border-b border-slate-300 pb-1 mb-2">MODELLI TROVATI:</p>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                          {Object.keys(modelsConfig).map(modelKey => (
-                              <div key={modelKey} className={`p-2 border rounded ${modelKey.includes(selectedModelId.toUpperCase()) ? 'bg-blue-100 border-blue-400' : 'bg-white border-slate-200'}`}>
-                                  <strong>{modelKey}</strong>
+                          {Object.keys(modelsConfig).slice(0, 20).map(modelKey => {
+                              const isMatch = modelKey === selectedModelId;
+                              return (
+                              <div key={modelKey} className={`p-2 border rounded ${isMatch ? 'bg-green-100 border-green-500' : 'bg-white border-slate-200'}`}>
+                                  <div className="flex justify-between">
+                                    <strong>{modelKey}</strong>
+                                  </div>
                                   <div className="mt-1 pl-2 border-l-2 border-slate-300 text-[10px]">
-                                      {Object.entries(modelsConfig[modelKey]).map(([k, v]) => (
+                                      {Object.entries(modelsConfig[modelKey]).slice(0, 5).map(([k, v]) => (
                                           <div key={k}>{k}: {v}</div>
                                       ))}
                                   </div>
                               </div>
-                          ))}
+                          )})}
                       </div>
                   </div>
               )}

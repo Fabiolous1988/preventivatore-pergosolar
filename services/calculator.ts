@@ -1,17 +1,64 @@
 
 import { PergolaModel, ModelsConfig } from "../types";
 
-// Official Pergosolar Product Line
-export const PERGOLA_MODELS: PergolaModel[] = [
-    { id: 'solarflex', name: 'Solarflex', category: 'Solarflex', allowsStructure: true, allowsPV: true, allowsGaskets: true, requiresLifting: false },
-    { id: 'solarflex_maxi', name: 'Solarflex Maxi', category: 'Solarflex', allowsStructure: true, allowsPV: true, allowsGaskets: true, requiresLifting: false },
-    { id: 'solarflex_urano', name: 'Solarflex Urano', category: 'Solarflex', allowsStructure: true, allowsPV: true, allowsGaskets: true, requiresLifting: false },
-    { id: 'solarflex_urano_twin', name: 'Solarflex Urano Twin-Drive', category: 'Solarflex', allowsStructure: true, allowsPV: true, allowsGaskets: true, requiresLifting: false },
-    { id: 'centauro_corporate', name: 'Centauro Corporate', category: 'Corporate', allowsStructure: true, allowsPV: true, allowsGaskets: true, requiresLifting: true, liftingType: 'Mezzo Sollevamento' },
-    { id: 'centauro_corporate_twin', name: 'Centauro Corporate Twin-Drive', category: 'Corporate', allowsStructure: true, allowsPV: true, allowsGaskets: true, requiresLifting: true, liftingType: 'Mezzo Sollevamento' },
-    { id: 'solarflex_truck', name: 'Solarflex Truck', category: 'Automotive', allowsStructure: true, allowsPV: true, allowsGaskets: false, requiresLifting: false },
-    { id: 'solarflex_camper', name: 'Solarflex Camper', category: 'Automotive', allowsStructure: true, allowsPV: true, allowsGaskets: false, requiresLifting: false },
-];
+// Base metadata for known models to keep UI nice (categories, lifting rules)
+// We will merge this with the dynamic CSV data.
+const STATIC_METADATA: Record<string, Partial<PergolaModel>> = {
+    'solarflex': { category: 'Solarflex', requiresLifting: false },
+    'solarflex_maxi': { category: 'Solarflex', requiresLifting: false },
+    'solarflex_urano': { category: 'Solarflex', requiresLifting: false },
+    'solarflex_urano_twin': { category: 'Solarflex', requiresLifting: false },
+    'centauro_corporate': { category: 'Corporate', requiresLifting: true, liftingType: 'Mezzo Sollevamento' },
+    'centauro_corporate_twin': { category: 'Corporate', requiresLifting: true, liftingType: 'Mezzo Sollevamento' },
+    'solarflex_truck': { category: 'Automotive', requiresLifting: false },
+    'solarflex_camper': { category: 'Automotive', requiresLifting: false },
+};
+
+// HELPER: Normalize string for comparison (remove ALL spaces, symbols, lowercase)
+export const normalize = (str: string) => str.replace(/[^a-z0-9]/gi, '').toLowerCase();
+
+// Generates the official list of models directly from the loaded CSV config
+export const getDynamicModelList = (modelsConfig: ModelsConfig | null): PergolaModel[] => {
+    if (!modelsConfig) {
+        // Fallback to basic static list if no config loaded
+        return Object.entries(STATIC_METADATA).map(([id, meta]) => ({
+            id,
+            name: id.replace(/_/g, ' ').toUpperCase(), // Fallback name
+            category: meta.category || 'Standard',
+            allowsStructure: true,
+            allowsPV: true,
+            allowsGaskets: true,
+            requiresLifting: !!meta.requiresLifting,
+            liftingType: meta.liftingType
+        }));
+    }
+
+    // Generate list from CSV Keys
+    return Object.keys(modelsConfig).map(modelKey => {
+        const row = modelsConfig[modelKey];
+        const normKey = normalize(modelKey);
+        
+        // Try to find static metadata match based on fuzzy name check
+        const knownId = Object.keys(STATIC_METADATA).find(id => normalize(id) === normKey || normKey.includes(normalize(id)));
+        const meta = knownId ? STATIC_METADATA[knownId] : {};
+
+        // Infer capabilities from CSV Columns
+        // If column exists and value > 0, then feature is allowed
+        const hasPV = getVal(row, ['ORE_INSTALLAZIONE_1PA_PF', 'ORE_PV_1PA']) > 0;
+        const hasGaskets = getVal(row, ['ORE_INSTALLAZIONE_1PA_PF_GUARNIZIONI', 'ORE_GUARNIZIONI_1PA']) > 0;
+        
+        return {
+            id: modelKey, // THE ID IS NOW THE EXACT CSV KEY
+            name: modelKey, // Display Name matches CSV exactly (includes typos like URALNO, which ensures matching works)
+            category: meta.category || 'Generale',
+            allowsStructure: true,
+            allowsPV: hasPV || true, // Default true if column missing, or check logic
+            allowsGaskets: hasGaskets || true,
+            requiresLifting: !!meta.requiresLifting,
+            liftingType: meta.liftingType
+        };
+    });
+};
 
 export const calculateBallastCount = (spots: number): number => {
     if (spots <= 0) return 0;
@@ -27,7 +74,7 @@ const getVal = (params: Record<string, number>, possibleKeys: string[]): number 
 };
 
 export const calculateInstallationHours = (
-    modelId: string, 
+    modelId: string, // This will now be the EXACT CSV KEY
     spots: number, 
     includePV: boolean, 
     includeGaskets: boolean,
@@ -37,54 +84,35 @@ export const calculateInstallationHours = (
     if (!modelId || spots <= 0) return 0;
     if (!modelsConfig) return 0;
 
-    const modelDef = PERGOLA_MODELS.find(m => m.id === modelId);
-    const searchName = (modelDef?.name || modelId).toUpperCase().trim();
-
-    // Fix: Sort keys by length descending. 
-    // This ensures "SOLARFLEX MAXI" (length 14) is checked before "SOLARFLEX" (length 9).
-    const availableKeys = Object.keys(modelsConfig).sort((a, b) => b.length - a.length);
-
-    // 1. Try EXACT Match
-    let configKey = availableKeys.find(k => k === searchName);
+    // DIRECT LOOKUP
+    // Since dropdown ID = CSV Key, we don't need fuzzy matching anymore!
+    const row = modelsConfig[modelId];
     
-    // 2. If no exact match, try inclusion (still sorted by length desc)
-    if (!configKey) {
-        configKey = availableKeys.find(k => searchName.includes(k) || k.includes(searchName));
-    }
-    
-    if (!configKey) {
-        console.warn(`[Calculator] Model ${searchName} not found in CSV keys:`, availableKeys.slice(0, 5));
+    if (!row) {
+        console.warn(`[Calculator] Model "${modelId}" not found in CSV keys.`);
         return 0;
     }
 
-    const row = modelsConfig[configKey];
-    console.log(`[Calculator] Selected Row for ${searchName} (Matched Key: ${configKey}):`, row);
+    console.log(`[Calculator] Exact Match Found for "${modelId}"`);
 
-    // --- EXACT COLUMN MAPPING (Based on user instruction) ---
+    // --- EXACT COLUMN MAPPING ---
+    const base = getVal(row, ['ORE_INSTALLAZIONE_1PA']);
+    const pv = includePV ? getVal(row, ['ORE_INSTALLAZIONE_1PA_PF']) : 0;
+    const gaskets = includeGaskets ? getVal(row, ['ORE_INSTALLAZIONE_1PA_PF_GUARNIZIONI']) : 0;
     
-    // 1. BASE: "ORE_INSTALLAZIONE_1PA"
-    const base = getVal(row, ['ORE_INSTALLAZIONE_1PA', 'ORE_INSTALLAZIONE_1_PA']);
-    
-    // 2. PV: "ORE_INSTALLAZIONE_1PA_PF"
-    const pv = includePV ? getVal(row, ['ORE_INSTALLAZIONE_1PA_PF', 'ORE_PV_1PA']) : 0;
-    
-    // 3. GASKETS: "ORE_INSTALLAZIONE_1PA_PF_GUARNIZIONI"
-    const gaskets = includeGaskets ? getVal(row, ['ORE_INSTALLAZIONE_1PA_PF_GUARNIZIONI', 'ORE_GUARNIZIONI_1PA']) : 0;
-    
-    // 4. BALLAST: "ORE_INSTALLAZIONE_ZAVORRE" (Time for 2 ballasts)
+    // Ballast logic
     let ballastTotalTime = 0;
     if (includeBallast) {
         const numBallasts = calculateBallastCount(spots);
-        const timeFor2 = getVal(row, ['ORE_INSTALLAZIONE_ZAVORRE', 'ORE_ZAVORRE']);
-        // If csv says "1.50" for 2 ballasts, and we have 4 ballasts -> (4/2)*1.5 = 3 hours
-        ballastTotalTime = (numBallasts / 2) * timeFor2;
+        const timeFor2 = getVal(row, ['ORE_INSTALLAZIONE_ZAVORRE']);
+        // Logic: timeFor2 is for 2 ballasts. 
+        if (timeFor2 > 0) {
+            const pairs = Math.ceil(numBallasts / 2);
+            ballastTotalTime = pairs * timeFor2; 
+        }
     }
 
-    // Formula: (Base + PV + Gaskets) * spots + BallastTime
-    // Note: PV and Gaskets are usually additive PER SPOT in the sheet logic described
-    const total = (base * spots) + (pv * spots) + (gaskets * spots) + ballastTotalTime;
-    
-    console.log(`[Calc Details] Model:${configKey} Spots:${spots} | Base:${base} PV:${pv} Gask:${gaskets} BallastTime:${ballastTotalTime} -> TOTAL:${total}`);
+    const total = ((base + pv + gaskets) * spots) + ballastTotalTime;
     
     return Math.round(total * 100) / 100;
 };
