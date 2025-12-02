@@ -26,9 +26,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const key = getStoredApiKey();
     if (!key) {
-      // Default key is now hardcoded in storage.ts, so this might trigger less often
-      // but if user manually cleared it, we still show settings
-      // However, since getStoredApiKey now returns default if missing, this branch is rarely taken unless default fails
+      setIsSettingsOpen(true);
     }
     
     // Load external configs
