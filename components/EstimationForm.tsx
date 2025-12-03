@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { EstimateInputs, ServiceType, TransportMode, ModelsConfig, LogisticsConfig, PergolaModel, DiscountRule } from '../types';
 import { calculateInstallationHours, calculateBallastCount, normalize, getDynamicModelList, getBallastList } from '../services/calculator';
-import { Loader2, MapPin, Calendar, Truck, UserCog, Building2, LayoutGrid, CarFront, ArrowDownCircle, Users, CheckSquare, Weight, BoxSelect, RefreshCw, Calculator, Bug, Eye, Percent } from 'lucide-react';
+import { Loader2, MapPin, Calendar, Truck, UserCog, Building2, LayoutGrid, CarFront, ArrowDownCircle, Users, CheckSquare, Weight, BoxSelect, RefreshCw, Calculator, Bug, Eye, Percent, Clock } from 'lucide-react';
 
 interface Props {
   onSubmit: (data: EstimateInputs) => void;
@@ -386,9 +386,24 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
         </div>
         )}
 
+        {/* Start Date Field - Restored */}
         <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
-                <Calendar className="w-4 h-4" /> Giorni Lavorativi Stimati (Ore Totali / (Tecnici × 8h))
+                <Calendar className="w-4 h-4" /> Data Inizio Lavori
+            </label>
+            <input
+                type="date"
+                name="startDate"
+                value={formData.startDate}
+                onChange={handleChange}
+                className="w-full p-2 border border-slate-300 rounded-lg text-sm bg-white"
+                required
+            />
+        </div>
+
+        <div className="space-y-2">
+            <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
+                <Clock className="w-4 h-4" /> Giorni Lavorativi Stimati (Ore Totali / (Tecnici × 8h))
             </label>
             <div className="flex gap-2 items-center">
                 <input

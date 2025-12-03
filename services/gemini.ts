@@ -336,6 +336,11 @@ export const calculateEstimate = async (
 
   } catch (e: any) {
     console.error("AI Generation Error:", e);
-    throw new Error(`Errore calcolo AI: ${e.message}`);
+    // Handle specific API key leakage error from Google
+    const msg = e.message || String(e);
+    if (msg.includes("leaked") || msg.includes("PERMISSION_DENIED") || msg.includes("403")) {
+        throw new Error("LA TUA CHIAVE API È STATA BLOCCATA DA GOOGLE (Leaked Key). Per sicurezza Google l'ha disattivata perchè rilevata in pubblico. Generane una nuova su AI Studio e aggiornala nelle Impostazioni.");
+    }
+    throw new Error(`Errore calcolo AI: ${msg}`);
   }
 };

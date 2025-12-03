@@ -74,7 +74,14 @@ const App: React.FC = () => {
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Impossibile generare il preventivo. Controlla gli input o la chiave API.");
-      if (err.message?.includes("API Key") || err.message?.includes("Chiave API")) {
+      
+      // Auto-open settings if key issue detected
+      if (
+          err.message?.includes("API Key") || 
+          err.message?.includes("Chiave API") || 
+          err.message?.includes("BLOCCATA") || 
+          err.message?.includes("PERMISSION_DENIED")
+      ) {
           setIsSettingsOpen(true);
       }
     } finally {
@@ -122,8 +129,8 @@ const App: React.FC = () => {
                     />
                     
                     {error && (
-                        <div className="mt-4 p-4 bg-red-50 text-red-600 rounded-lg border border-red-200 text-sm animate-in fade-in">
-                            {error}
+                        <div className="mt-4 p-4 bg-red-50 text-red-600 rounded-lg border border-red-200 text-sm animate-in fade-in flex items-start gap-2">
+                            <div className="flex-1 font-semibold">{error}</div>
                         </div>
                     )}
                 </div>
