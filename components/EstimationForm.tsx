@@ -255,6 +255,20 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
                 </div>
             </div>
         </div>
+
+        <div className="space-y-2 border-t border-slate-200 pt-3">
+            <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-slate-600" /> Data Inizio Lavori
+            </label>
+            <input
+                type="date"
+                name="startDate"
+                value={formData.startDate}
+                onChange={handleChange}
+                className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
+                required
+            />
+        </div>
       </div>
 
       <div className="space-y-4">
@@ -385,21 +399,6 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
             )}
         </div>
         )}
-
-        {/* Start Date Field - Restored */}
-        <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
-                <Calendar className="w-4 h-4" /> Data Inizio Lavori
-            </label>
-            <input
-                type="date"
-                name="startDate"
-                value={formData.startDate}
-                onChange={handleChange}
-                className="w-full p-2 border border-slate-300 rounded-lg text-sm bg-white"
-                required
-            />
-        </div>
 
         <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
