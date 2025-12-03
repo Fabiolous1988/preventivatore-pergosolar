@@ -35,6 +35,8 @@ export interface EstimateInputs {
   parkingSpots?: number;
   includePV?: boolean;
   includeGaskets?: boolean;
+  includeFabric?: boolean; // New: Telo
+  includeInsulatedPanels?: boolean; // New: Pannelli Coibentati
   includeBallast?: boolean; // New: Zavorre
   calculatedHours?: number; // Internal use: passed to AI
   
@@ -79,12 +81,19 @@ export interface PergolaModel {
   liftingType?: string;
 }
 
+export interface DiscountRule {
+  threshold: number; // e.g. 50 (spots)
+  percentage: number; // e.g. 5 (%)
+}
+
 export interface AppConfig {
   internalHourlyRate: number;
   externalHourlyRate: number;
   defaultMargin: number;
   defaultExtraHourly: number;
   defaultExtraDaily: number;
+  // Dynamic discount rules from CSV
+  discountRules: DiscountRule[];
   // Store any other parameters found in the sheet (Key -> {Value, Description})
   customParams: Record<string, { value: number; description?: string }>;
 }

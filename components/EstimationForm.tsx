@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { EstimateInputs, ServiceType, TransportMode, ModelsConfig, LogisticsConfig, PergolaModel } from '../types';
+import { EstimateInputs, ServiceType, TransportMode, ModelsConfig, LogisticsConfig, PergolaModel, DiscountRule } from '../types';
 import { calculateInstallationHours, calculateBallastCount, normalize, getDynamicModelList, getBallastList } from '../services/calculator';
 import { Loader2, MapPin, Calendar, Truck, UserCog, Building2, LayoutGrid, CarFront, ArrowDownCircle, Users, CheckSquare, Weight, BoxSelect, RefreshCw, Calculator, Bug, Eye, Percent } from 'lucide-react';
 
@@ -8,6 +8,7 @@ interface Props {
   onSubmit: (data: EstimateInputs) => void;
   isLoading: boolean;
   modelsConfig: ModelsConfig | null;
+  discountRules: DiscountRule[];
 }
 
 interface AddressState {
@@ -17,7 +18,7 @@ interface AddressState {
   province: string;
 }
 
-const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) => {
+const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, discountRules }) => {
   const [origin, setOrigin] = useState<AddressState>({ 
     street: 'Via Disciplina 11', 
     city: 'San Martino Buon Albergo', 
@@ -40,9 +41,14 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
   const [selectedBallastId, setSelectedBallastId] = useState<string>('');
 
   const [parkingSpots, setParkingSpots] = useState<number>(2);
+  
+  // Installation Options
   const [includePV, setIncludePV] = useState<boolean>(false);
   const [includeGaskets, setIncludeGaskets] = useState<boolean>(false);
+  const [includeFabric, setIncludeFabric] = useState<boolean>(false);
+  const [includeInsulatedPanels, setIncludeInsulatedPanels] = useState<boolean>(false);
   const [includeBallast, setIncludeBallast] = useState<boolean>(false);
+
   const [calculatedHours, setCalculatedHours] = useState<number>(0);
   const [hasForklift, setHasForklift] = useState<boolean>(false);
   const [returnOnWeekends, setReturnOnWeekends] = useState<boolean>(false);
@@ -50,7 +56,7 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
   // Discount Logic
   const [discountPercent, setDiscountPercent] = useState<number>(0);
 
-  const [formData, setFormData] = useState<Omit<EstimateInputs, 'origin' | 'destination' | 'excludeOriginTransfer' | 'selectedModelId' | 'parkingSpots' | 'includePV' | 'includeGaskets' | 'includeBallast' | 'calculatedHours' | 'useInternalTeam' | 'internalTechs' | 'useExternalTeam' | 'externalTechs' | 'modelsConfig' | 'hasForklift' | 'returnOnWeekends' | 'marginPercent' | 'extraHourlyCost' | 'extraDailyCost' | 'discountPercent'>>({
+  const [formData, setFormData] = useState<Omit<EstimateInputs, 'origin' | 'destination' | 'excludeOriginTransfer' | 'selectedModelId' | 'parkingSpots' | 'includePV' | 'includeGaskets' | 'includeFabric' | 'includeInsulatedPanels' | 'includeBallast' | 'calculatedHours' | 'useInternalTeam' | 'internalTechs' | 'useExternalTeam' | 'externalTechs' | 'modelsConfig' | 'hasForklift' | 'returnOnWeekends' | 'marginPercent' | 'extraHourlyCost' | 'extraDailyCost' | 'discountPercent'>>({
     serviceType: ServiceType.FULL_INSTALLATION,
     transportMode: TransportMode.COMPANY_VEHICLE,
     startDate: new Date().toISOString().split('T')[0],
@@ -79,18 +85,18 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
     }
   }, [modelsConfig]);
 
-  // Calculate Discount based on Parking Spots
+  // Calculate Discount based on Parking Spots using Dynamic Rules from CSV
   useEffect(() => {
       let discount = 0;
-      if (parkingSpots > 300) discount = 14;
-      else if (parkingSpots > 250) discount = 12;
-      else if (parkingSpots > 200) discount = 10;
-      else if (parkingSpots > 150) discount = 8;
-      else if (parkingSpots > 100) discount = 7;
-      else if (parkingSpots > 50) discount = 5;
-      
+      if (discountRules && discountRules.length > 0) {
+          // discountRules are sorted descending. Find the first rule where parkingSpots > threshold.
+          const rule = discountRules.find(r => parkingSpots > r.threshold);
+          if (rule) {
+              discount = rule.percentage;
+          }
+      }
       setDiscountPercent(discount);
-  }, [parkingSpots]);
+  }, [parkingSpots, discountRules]);
 
   // Auto-Select Ballast based on Model
   useEffect(() => {
@@ -118,6 +124,7 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
   const ballastCount = includeBallast ? calculateBallastCount(parkingSpots) : 0;
 
   const performCalculation = () => {
+    // Note: Fabric and Insulated Panels currently do not add time, as per user instructions
     const hours = calculateInstallationHours(
         selectedModelId, 
         parkingSpots, 
@@ -131,7 +138,7 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
     
     const activeTechs = (useInternalTeam ? internalTechs : 0) + (useExternalTeam ? externalTechs : 0);
     const techs = activeTechs > 0 ? activeTechs : 1;
-    // Updated: Divide by 8 hours per day
+    // Updated: Divide by 8 hours per day to estimate duration
     const estimatedDays = hours > 0 ? Math.max(0.5, Math.ceil(hours / techs / 8 * 2) / 2) : 1;
     
     setFormData(prev => ({ ...prev, durationDays: estimatedDays }));
@@ -173,6 +180,8 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
       parkingSpots,
       includePV,
       includeGaskets,
+      includeFabric,
+      includeInsulatedPanels,
       includeBallast,
       calculatedHours,
       hasForklift,
@@ -298,21 +307,30 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
                 <input type="number" min="1" max="1000" value={parkingSpots} onChange={(e) => setParkingSpots(Number(e.target.value))} className="w-full p-2 border border-slate-300 rounded text-sm" />
             </div>
 
-            <div className="md:col-span-2 grid grid-cols-2 gap-3 mt-2">
+            <div className="md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
                 <label className={`flex items-center gap-2 p-2 rounded border ${selectedModel?.allowsPV ? 'bg-white border-slate-200' : 'bg-slate-100 opacity-50'}`}>
                     <input type="checkbox" checked={includePV} onChange={(e) => setIncludePV(e.target.checked)} disabled={!selectedModel?.allowsPV} className="w-4 h-4" />
-                    <span className="text-sm">Includi Fotovoltaico</span>
+                    <span className="text-sm">Inst. PF (Pannelli Fotovoltaici)</span>
                 </label>
                 <label className={`flex items-center gap-2 p-2 rounded border ${selectedModel?.allowsGaskets ? 'bg-white border-slate-200' : 'bg-slate-100 opacity-50'}`}>
                     <input type="checkbox" checked={includeGaskets} onChange={(e) => setIncludeGaskets(e.target.checked)} disabled={!selectedModel?.allowsGaskets} className="w-4 h-4" />
-                    <span className="text-sm">Includi Guarnizioni</span>
+                    <span className="text-sm">Inst. Guarnizioni</span>
+                </label>
+                {/* New Options */}
+                <label className="flex items-center gap-2 p-2 rounded border bg-white border-slate-200">
+                    <input type="checkbox" checked={includeFabric} onChange={(e) => setIncludeFabric(e.target.checked)} className="w-4 h-4" />
+                    <span className="text-sm">Inst. Telo</span>
+                </label>
+                <label className="flex items-center gap-2 p-2 rounded border bg-white border-slate-200">
+                    <input type="checkbox" checked={includeInsulatedPanels} onChange={(e) => setIncludeInsulatedPanels(e.target.checked)} className="w-4 h-4" />
+                    <span className="text-sm">Inst. Pannelli Coibentati</span>
                 </label>
             </div>
 
-            <div className="md:col-span-2 space-y-2 bg-white p-3 rounded border border-slate-200">
+            <div className="md:col-span-2 space-y-2 bg-white p-3 rounded border border-slate-200 mt-1">
                 <label className="flex items-center gap-2">
                     <input type="checkbox" checked={includeBallast} onChange={(e) => setIncludeBallast(e.target.checked)} className="w-4 h-4" />
-                    <span className="text-sm font-semibold flex items-center gap-1"><Weight className="w-3 h-3"/> Includi Zavorre</span>
+                    <span className="text-sm font-semibold flex items-center gap-1"><Weight className="w-3 h-3"/> Inst. Zavorre</span>
                 </label>
                 
                 {includeBallast && (
@@ -336,8 +354,8 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
                 )}
             </div>
             
-            {/* Discount Section - Only visible if > 50 spots */}
-            {parkingSpots > 50 && (
+            {/* Discount Section - Only visible if discount > 0 */}
+            {discountPercent > 0 && (
                 <div className="md:col-span-2 bg-green-50 p-3 rounded border border-green-200 animate-in fade-in">
                     <div className="flex items-center justify-between">
                          <label className="text-sm font-bold text-green-800 flex items-center gap-2">
@@ -349,14 +367,14 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
                                 min="0" 
                                 max="100" 
                                 value={discountPercent} 
-                                onChange={(e) => setDiscountPercent(Number(e.target.value))} 
-                                className="w-20 p-1.5 text-right border border-green-300 rounded text-sm focus:ring-2 focus:ring-green-500 outline-none" 
+                                readOnly
+                                className="w-20 p-1.5 text-right border border-green-300 rounded text-sm bg-green-100 font-bold" 
                             />
                             <span className="text-sm font-bold text-green-700">%</span>
                         </div>
                     </div>
                     <p className="text-[10px] text-green-600 mt-1">
-                        Sconto automatico volume applicato: {discountPercent}% (Modificabile)
+                        Sconto automatico volume applicato: {discountPercent}% (Tabella Metriche - Posti Auto)
                     </p>
                 </div>
             )}
@@ -429,40 +447,13 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig }) 
           </summary>
           <div className="bg-slate-100 p-4 rounded overflow-auto max-h-80 font-mono text-slate-700">
               <p><strong>Status Caricamento:</strong> {modelsConfig ? `✅ Caricati ${Object.keys(modelsConfig).length} modelli` : '❌ NON CARICATI'}</p>
+              <p><strong>Status Sconti:</strong> {discountRules.length > 0 ? `✅ Caricate ${discountRules.length} regole` : '⚠️ Nessuna regola sconto'}</p>
               
               <div className="my-2 p-2 bg-yellow-50 border border-yellow-200 rounded">
                 <p><strong>Modello Selezionato:</strong> "{selectedModelId}"</p>
                 <p><strong>Zavorra Selezionata:</strong> "{selectedBallastId}"</p>
-                <p><strong>Normalized Target:</strong> "{normalize(selectedModelId)}"</p>
+                <p><strong>Sconto Attuale:</strong> {discountPercent}%</p>
               </div>
-
-              {modelsConfig && (
-                  <div className="mt-4">
-                      <p><strong>Cerca Corrispondenza In (Primi 5):</strong></p>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
-                          {Object.keys(modelsConfig)
-                            .filter(k => !k.includes('ZAVORRA')) // Show only pergolas in this view
-                            .slice(0, 10).map(modelKey => {
-                              const normKey = normalize(modelKey);
-                              const normTarget = normalize(selectedModelId);
-                              const isMatch = normKey === normTarget || normKey.includes(normTarget) || normTarget.includes(normKey);
-                              
-                              return (
-                              <div key={modelKey} className={`p-2 border rounded ${isMatch ? 'bg-green-100 border-green-500' : 'bg-white border-slate-200'}`}>
-                                  <div className="flex justify-between">
-                                    <strong>{modelKey}</strong>
-                                  </div>
-                                  <div className="text-[9px] text-slate-500">{normKey}</div>
-                                  <div className="mt-1 pl-2 border-l-2 border-slate-300 text-[10px]">
-                                      {Object.entries(modelsConfig[modelKey]).slice(0, 5).map(([k, v]) => (
-                                          <div key={k}>{k}: {v}</div>
-                                      ))}
-                                  </div>
-                              </div>
-                          )})}
-                      </div>
-                  </div>
-              )}
           </div>
       </details>
     </form>

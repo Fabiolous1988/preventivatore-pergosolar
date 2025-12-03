@@ -118,6 +118,7 @@ const App: React.FC = () => {
                         onSubmit={handleEstimate} 
                         isLoading={loading} 
                         modelsConfig={modelsConfig}
+                        discountRules={appConfig.discountRules}
                     />
                     
                     {error && (

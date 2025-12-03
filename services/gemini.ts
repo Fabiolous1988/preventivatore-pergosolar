@@ -221,7 +221,12 @@ export const calculateEstimate = async (
     - Squadra INTERNA: ${inputs.internalTechs} persone (Tariffa: €${config.internalHourlyRate}/h).
     - Squadra ESTERNA: ${inputs.externalTechs} persone (Tariffa: €${config.externalHourlyRate}/h).
     - Modello: ${inputs.selectedModelId} (Posti: ${inputs.parkingSpots})
-    - Zavorre: ${ballastCount} (Stima peso: ${estBallastWeight} kg)
+    - OPZIONI INSTALLAZIONE:
+      * Installazione PF (Pannelli Fotovoltaici): ${inputs.includePV ? 'Sì' : 'No'}
+      * Installazione Guarnizioni: ${inputs.includeGaskets ? 'Sì' : 'No'}
+      * Installazione Telo: ${inputs.includeFabric ? 'Sì' : 'No'}
+      * Installazione Pannelli Coibentati: ${inputs.includeInsulatedPanels ? 'Sì' : 'No'}
+      * Installazione Zavorre: ${inputs.includeBallast ? 'Sì' : 'No'} (Qtà: ${ballastCount}, Peso Tot stimato: ${estBallastWeight} kg)
     - Muletto Cliente (già in loco): ${inputs.hasForklift ? 'Sì' : 'No'}
     - Ore Man-Hour Totali Stimate dal sistema: ${inputs.calculatedHours} (Usa questo come base lavoro)
     - Rientro nel Weekend? ${inputs.returnOnWeekends ? 'Sì' : 'No'}
