@@ -138,8 +138,13 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
     
     const activeTechs = (useInternalTeam ? internalTechs : 0) + (useExternalTeam ? externalTechs : 0);
     const techs = activeTechs > 0 ? activeTechs : 1;
-    // Updated: Divide by 8 hours per day to estimate duration
-    const estimatedDays = hours > 0 ? Math.max(0.5, Math.ceil(hours / techs / 8 * 2) / 2) : 1;
+    const hoursPerDay = techs * 8; // Standard 8 hours per tech
+
+    // Formula: Total Hours / (Techs * 8)
+    const estimatedDaysRaw = hours / hoursPerDay;
+    
+    // Round to nearest 0.5 for better planning, but ensure at least 0.5 days
+    const estimatedDays = hours > 0 ? Math.max(0.5, Math.ceil(estimatedDaysRaw * 2) / 2) : 1;
     
     setFormData(prev => ({ ...prev, durationDays: estimatedDays }));
   };
@@ -383,7 +388,7 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
 
         <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
-                <Calendar className="w-4 h-4" /> Giorni Lavorativi Stimati (Ore Totali / 8)
+                <Calendar className="w-4 h-4" /> Giorni Lavorativi Stimati (Ore Totali / (Tecnici × 8h))
             </label>
             <div className="flex gap-2 items-center">
                 <input
