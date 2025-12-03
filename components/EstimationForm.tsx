@@ -459,22 +459,6 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
             {isLoading ? 'Calcolo in corso...' : 'Calcola Preventivo'}
         </button>
       </div>
-
-      <details className="mt-8 text-xs text-slate-400 border-t pt-4">
-          <summary className="cursor-pointer flex items-center gap-2 hover:text-slate-600 mb-2 font-bold text-slate-500">
-              <Eye className="w-4 h-4" /> DEBUG DATI MODELLI (CSV Viewer)
-          </summary>
-          <div className="bg-slate-100 p-4 rounded overflow-auto max-h-80 font-mono text-slate-700">
-              <p><strong>Status Caricamento:</strong> {modelsConfig ? `✅ Caricati ${Object.keys(modelsConfig).length} modelli` : '❌ NON CARICATI'}</p>
-              <p><strong>Status Sconti:</strong> {discountRules.length > 0 ? `✅ Caricate ${discountRules.length} regole` : '⚠️ Nessuna regola sconto'}</p>
-              
-              <div className="my-2 p-2 bg-yellow-50 border border-yellow-200 rounded">
-                <p><strong>Modello Selezionato:</strong> "{selectedModelId}"</p>
-                <p><strong>Zavorra Selezionata:</strong> "{selectedBallastId}"</p>
-                <p><strong>Sconto Attuale:</strong> {discountPercent}%</p>
-              </div>
-          </div>
-      </details>
     </form>
   );
 };
