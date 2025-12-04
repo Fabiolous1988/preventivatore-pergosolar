@@ -305,6 +305,7 @@ export const calculateEstimate = async (
   `;
 
   try {
+    // 120s timeout for the Pro model
     const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error("Timeout calcolo AI (120s).")), 120000)
     );
@@ -336,11 +337,60 @@ export const calculateEstimate = async (
 
   } catch (e: any) {
     console.error("AI Generation Error:", e);
-    // Handle specific API key leakage error from Google
-    const msg = e.message || String(e);
-    if (msg.includes("leaked") || msg.includes("PERMISSION_DENIED") || msg.includes("403")) {
+    
+    let msg = e.message || String(e);
+
+    // Attempt to extract cleaner error message from Google's JSON error structure if present
+    if (msg.includes('{') && msg.includes('error')) {
+        try {
+            const match = msg.match(/{.*}/s); // simplistic JSON extraction
+            if (match) {
+                const errObj = JSON.parse(match[0]);
+                if (errObj.error?.message) {
+                    msg = errObj.error.message;
+                }
+            }
+        } catch (jsonErr) {
+            // ignore parsing error, use original msg
+        }
+    }
+
+    const lowerMsg = msg.toLowerCase();
+
+    // Critical Error: Leaked API Key
+    if (lowerMsg.includes("leaked") || lowerMsg.includes("permission_denied") || msg.includes("403")) {
         throw new Error("LA TUA CHIAVE API È STATA BLOCCATA DA GOOGLE (Leaked Key). Per sicurezza Google l'ha disattivata perchè rilevata in pubblico. Generane una nuova su AI Studio e aggiornala nelle Impostazioni.");
     }
+    
+    // Fallback logic for Timeout, Quota (429), or Resource Exhausted
+    // This catches "Timeout calcolo AI (120s)", "429", "quota", "resource exhausted"
+    if (
+        lowerMsg.includes("429") || 
+        lowerMsg.includes("quota") || 
+        lowerMsg.includes("timeout") || 
+        lowerMsg.includes("resource_exhausted") ||
+        lowerMsg.includes("limit")
+    ) {
+         console.warn("Pro model failed (Quota/Timeout), falling back to Flash. Reason:", msg);
+         if (onStatusUpdate) onStatusUpdate("Modello Pro occupato, passaggio automatico a Flash...");
+         
+         try {
+            const fallbackResponse = await ai.models.generateContent({
+                model: "gemini-2.5-flash",
+                contents: prompt,
+                config: { 
+                    responseMimeType: "application/json"
+                    // IMPORTANT: Do NOT send thinkingConfig to Flash
+                }
+            });
+            const fallbackParsed = cleanAndParseJSON(fallbackResponse.text);
+            return fallbackParsed;
+         } catch (fallbackError: any) {
+             console.error("Fallback failed:", fallbackError);
+             throw new Error(`Errore anche col modello di riserva: ${fallbackError.message}`);
+         }
+    }
+
     throw new Error(`Errore calcolo AI: ${msg}`);
   }
 };

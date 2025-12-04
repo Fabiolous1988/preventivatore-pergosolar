@@ -253,21 +253,21 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
                         <span className={`${hasForklift ? 'translate-x-6' : 'translate-x-1'} inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}/>
                     </button>
                 </div>
-            </div>
-        </div>
 
-        <div className="space-y-2 border-t border-slate-200 pt-3">
-            <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-slate-600" /> Data Inizio Lavori
-            </label>
-            <input
-                type="date"
-                name="startDate"
-                value={formData.startDate}
-                onChange={handleChange}
-                className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
-                required
-            />
+                <div className="space-y-2 mt-2">
+                    <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-slate-600" /> Data Inizio Lavori
+                    </label>
+                    <input
+                        type="date"
+                        name="startDate"
+                        value={formData.startDate}
+                        onChange={handleChange}
+                        className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
+                        required
+                    />
+                </div>
+            </div>
         </div>
       </div>
 
