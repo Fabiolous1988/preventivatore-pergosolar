@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { EstimateInputs, ServiceType, TransportMode, ModelsConfig, LogisticsConfig, PergolaModel, DiscountRule } from '../types';
 import { calculateInstallationHours, calculateBallastCount, normalize, getDynamicModelList, getBallastList } from '../services/calculator';
-import { Loader2, MapPin, Calendar, Truck, UserCog, Building2, LayoutGrid, CarFront, ArrowDownCircle, Users, CheckSquare, Weight, BoxSelect, RefreshCw, Calculator, Bug, Eye, Percent, Clock } from 'lucide-react';
+import { Loader2, MapPin, Calendar, Truck, UserCog, Building2, LayoutGrid, CarFront, ArrowDownCircle, Users, CheckSquare, Weight, BoxSelect, RefreshCw, Calculator, Bug, Eye, Percent, Clock, FileText } from 'lucide-react';
 
 interface Props {
   onSubmit: (data: EstimateInputs) => void;
@@ -124,6 +124,9 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
   const ballastCount = includeBallast ? calculateBallastCount(parkingSpots) : 0;
 
   const performCalculation = () => {
+    // Only calculate automatically for Full Installation
+    if (formData.serviceType !== ServiceType.FULL_INSTALLATION) return;
+
     // Note: Fabric and Insulated Panels currently do not add time, as per user instructions
     const hours = calculateInstallationHours(
         selectedModelId, 
@@ -272,12 +275,24 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
       </div>
 
       <div className="space-y-4">
-        <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">Tipo di Servizio</label>
-            <select name="serviceType" value={formData.serviceType} onChange={handleChange} className="w-full p-2 border border-slate-300 rounded-lg text-sm">
-                <option value={ServiceType.FULL_INSTALLATION}>{ServiceType.FULL_INSTALLATION}</option>
-                <option value={ServiceType.SUPPORT}>{ServiceType.SUPPORT}</option>
-            </select>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-700">Tipo di Servizio</label>
+                <select name="serviceType" value={formData.serviceType} onChange={handleChange} className="w-full p-2 border border-slate-300 rounded-lg text-sm">
+                    <option value={ServiceType.FULL_INSTALLATION}>{ServiceType.FULL_INSTALLATION}</option>
+                    <option value={ServiceType.SUPPORT}>{ServiceType.SUPPORT}</option>
+                </select>
+            </div>
+            
+            <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
+                    <Truck className="w-4 h-4" /> Modalità Trasferta
+                </label>
+                <select name="transportMode" value={formData.transportMode} onChange={handleChange} className="w-full p-2 border border-slate-300 rounded-lg text-sm">
+                    <option value={TransportMode.COMPANY_VEHICLE}>{TransportMode.COMPANY_VEHICLE}</option>
+                    <option value={TransportMode.PUBLIC_TRANSPORT}>{TransportMode.PUBLIC_TRANSPORT}</option>
+                </select>
+            </div>
         </div>
 
         <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-3">
@@ -346,119 +361,145 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
                 </label>
             </div>
 
-            <div className="md:col-span-2 space-y-2 bg-white p-3 rounded border border-slate-200 mt-1">
-                <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={includeBallast} onChange={(e) => setIncludeBallast(e.target.checked)} className="w-4 h-4" />
-                    <span className="text-sm font-semibold flex items-center gap-1"><Weight className="w-3 h-3"/> Inst. Zavorre</span>
-                </label>
-                
+            <div className="md:col-span-2 space-y-2 bg-white p-3 rounded border border-slate-200 mt-2">
+                <div className="flex items-center justify-between mb-2">
+                     <label className="flex items-center gap-2">
+                        <input type="checkbox" checked={includeBallast} onChange={(e) => setIncludeBallast(e.target.checked)} className="w-4 h-4 text-blue-600" />
+                        <span className="text-sm font-medium text-slate-700">Inst. Zavorre</span>
+                     </label>
+                     {includeBallast && (
+                        <span className="text-xs bg-slate-100 px-2 py-1 rounded text-slate-600 font-mono">
+                            Qtà: {ballastCount}
+                        </span>
+                     )}
+                </div>
                 {includeBallast && (
-                    <div className="ml-6 space-y-2 animate-in slide-in-from-top-1">
-                         <div className="flex flex-col gap-1">
-                             <label className="text-xs text-slate-500">Tipo Zavorra</label>
-                             <select 
-                                value={selectedBallastId} 
-                                onChange={(e) => setSelectedBallastId(e.target.value)}
-                                className="w-full p-1.5 text-xs border border-slate-300 rounded"
-                             >
-                                 {availableBallasts.map(b => (
-                                     <option key={b} value={b}>{b}</option>
-                                 ))}
-                             </select>
-                         </div>
-                         <div className="text-xs text-blue-600 font-bold bg-blue-50 p-1 rounded inline-block">
-                             Qtà Stimata: {ballastCount} (~{(ballastCount * 1600)}kg totali)
-                         </div>
+                    <div className="animate-in fade-in slide-in-from-top-1">
+                        <select value={selectedBallastId} onChange={(e) => setSelectedBallastId(e.target.value)} className="w-full p-2 border border-slate-300 rounded text-sm bg-slate-50">
+                            {availableBallasts.map(b => (
+                                <option key={b} value={b}>{b}</option>
+                            ))}
+                        </select>
+                        <p className="text-xs text-slate-400 mt-1 flex items-center gap-1">
+                            <Weight className="w-3 h-3" /> Peso stimato: ~{ballastCount * 1600} kg
+                        </p>
                     </div>
                 )}
             </div>
-            
-            {/* Discount Section - Only visible if discount > 0 */}
-            {discountPercent > 0 && (
-                <div className="md:col-span-2 bg-green-50 p-3 rounded border border-green-200 animate-in fade-in">
-                    <div className="flex items-center justify-between">
-                         <label className="text-sm font-bold text-green-800 flex items-center gap-2">
-                            <Percent className="w-4 h-4" /> Ottimizzazione Prezzo (Sconto %)
-                        </label>
-                        <div className="flex items-center gap-2">
-                            <input 
-                                type="number" 
-                                min="0" 
-                                max="100" 
-                                value={discountPercent} 
-                                readOnly
-                                className="w-20 p-1.5 text-right border border-green-300 rounded text-sm bg-green-100 font-bold" 
-                            />
-                            <span className="text-sm font-bold text-green-700">%</span>
-                        </div>
+
+             <div className="md:col-span-2 p-3 bg-blue-50 border border-blue-100 rounded-lg flex items-center justify-between mt-2">
+                <div>
+                    <p className="text-xs text-blue-600 uppercase font-bold tracking-wider mb-1">Stima Tempi Installazione</p>
+                    <div className="flex items-baseline gap-2">
+                         <span className="text-2xl font-bold text-blue-900">{formData.durationDays}</span>
+                         <span className="text-sm text-blue-700">Giorni Lavorativi</span>
                     </div>
-                    <p className="text-[10px] text-green-600 mt-1">
-                        Sconto automatico volume applicato: {discountPercent}% (Tabella Metriche - Posti Auto)
-                    </p>
+                    <p className="text-xs text-blue-500 mt-1">({calculatedHours.toFixed(1)} ore totali / {((useInternalTeam ? internalTechs : 0) + (useExternalTeam ? externalTechs : 0)) * 8}h al giorno)</p>
                 </div>
-            )}
+                <div className="h-10 w-10 bg-blue-200 rounded-full flex items-center justify-center text-blue-700">
+                    <Clock className="w-5 h-5" />
+                </div>
+            </div>
+            
+             {/* Rientro Weekend Logic */}
+             {(formData.durationDays > 5 || new Date(formData.startDate).getDay() === 5) && (
+                 <div className="md:col-span-2 p-3 bg-orange-50 border border-orange-100 rounded-lg flex items-center gap-3">
+                    <input 
+                        type="checkbox" 
+                        checked={returnOnWeekends} 
+                        onChange={(e) => setReturnOnWeekends(e.target.checked)}
+                        className="w-5 h-5 text-orange-600"
+                    />
+                    <div className="flex-1">
+                        <p className="text-sm font-bold text-orange-800">Rientro nel Weekend?</p>
+                        <p className="text-xs text-orange-700">Se selezionato, il preventivo includerà viaggi A/R extra per i weekend intermedi.</p>
+                    </div>
+                 </div>
+             )}
+
+             {/* Discount Feedback */}
+             {discountPercent > 0 && (
+                 <div className="md:col-span-2 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-3 animate-pulse">
+                     <Percent className="w-5 h-5 text-green-600" />
+                     <div>
+                         <p className="text-sm font-bold text-green-800">Sconto Volume Attivo!</p>
+                         <p className="text-xs text-green-700">Rilevati {parkingSpots} posti auto. Applicato sconto automatico del {discountPercent}% sul totale.</p>
+                     </div>
+                 </div>
+             )}
+             
+            <div className="md:col-span-2 space-y-2 bg-white p-3 rounded border border-slate-200">
+                <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
+                   <FileText className="w-4 h-4" /> Note Aggiuntive per il Preventivo
+                </label>
+                <textarea
+                    name="additionalNotes"
+                    value={formData.additionalNotes}
+                    onChange={handleChange}
+                    rows={3}
+                    className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                    placeholder="Es. Orari di cantiere, restrizioni accesso, necessità particolari..."
+                />
+            </div>
         </div>
         )}
 
-        <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
-                <Clock className="w-4 h-4" /> Giorni Lavorativi Stimati (Ore Totali / (Tecnici × 8h))
-            </label>
-            <div className="flex gap-2 items-center">
-                <input
-                    type="number"
-                    min="0.5"
-                    step="0.5"
-                    name="durationDays"
-                    value={formData.durationDays}
-                    onChange={handleChange}
-                    className="flex-1 p-2 border border-slate-300 rounded-lg bg-white"
-                    required
-                />
-                <button
-                    type="button"
-                    onClick={performCalculation}
-                    className="px-3 py-2 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-1 hover:bg-blue-100"
-                >
-                    <RefreshCw className="w-3 h-3" />
-                </button>
-            </div>
-            
-            <div className="flex items-center gap-2 text-xs text-slate-500 ml-1">
-                <Calculator className="w-3 h-3" />
-                <span>
-                   Ore Totali Tabellari: 
-                   <span className={`ml-1 font-bold ${calculatedHours === 0 ? 'text-red-500' : 'text-slate-800'}`}>
-                       {calculatedHours.toFixed(2)}h
-                   </span>
-                </span>
-                {calculatedHours === 0 && (
-                    <span className="text-red-500 ml-2 animate-pulse">(Nessun match o 0 ore)</span>
-                )}
-            </div>
-             
-             {formData.serviceType === ServiceType.FULL_INSTALLATION && (
-                 <div className="flex items-start gap-3 mt-2 p-2 bg-slate-50 rounded-md border border-slate-200">
-                     <input id="returnOnWeekends" type="checkbox" checked={returnOnWeekends} onChange={(e) => setReturnOnWeekends(e.target.checked)} className="w-4 h-4 mt-1" />
-                     <label htmlFor="returnOnWeekends" className="text-xs text-slate-600">
-                        <span className="font-semibold text-slate-700">Rientro nel Weekend?</span>
-                    </label>
+        {/* Manual Duration Input for Support Mode */}
+        {formData.serviceType === ServiceType.SUPPORT && (
+             <div className="space-y-4 bg-slate-50 p-4 rounded-lg border border-slate-200">
+                <div className="text-sm font-bold text-slate-700 border-b border-slate-200 pb-1 flex items-center gap-2">
+                    <UserCog className="w-4 h-4" /> Dettagli Intervento a Consuntivo
                 </div>
-            )}
-        </div>
-        
-        <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">Note Aggiuntive</label>
-            <textarea name="additionalNotes" value={formData.additionalNotes} onChange={handleChange} rows={3} className="w-full p-2 border border-slate-300 rounded-lg text-sm" />
-        </div>
-      </div>
+                
+                <div className="space-y-2">
+                     <label className="text-sm font-medium text-slate-700">Giorni Lavorativi Stimati</label>
+                     <div className="flex items-center gap-3">
+                         <input 
+                            type="number" 
+                            min="0.5" 
+                            step="0.5" 
+                            name="durationDays"
+                            value={formData.durationDays} 
+                            onChange={handleChange} 
+                            className="w-32 p-2 border border-slate-300 rounded text-sm font-bold text-center" 
+                         />
+                         <span className="text-sm text-slate-500">Giorni (Inserimento Manuale)</span>
+                     </div>
+                     <p className="text-xs text-slate-400">Inserisci la durata prevista dell'intervento. I costi di viaggio verranno calcolati su questa base.</p>
+                </div>
 
-      <div className="pt-4 border-t border-slate-200 flex justify-end">
-        <button type="submit" disabled={isLoading} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50">
-            {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckSquare className="w-5 h-5" />}
-            {isLoading ? 'Calcolo in corso...' : 'Calcola Preventivo'}
+                <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Note Intervento / Descrizione Attività</label>
+                    <textarea
+                        name="additionalNotes"
+                        value={formData.additionalNotes}
+                        onChange={handleChange}
+                        rows={4}
+                        className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                        placeholder="Descrivi cosa deve fare la squadra (es. 'Sola posa vetrate', 'Assistenza montaggio', 'Manutenzione')..."
+                    />
+                </div>
+             </div>
+        )}
+
+        {/* Submit Button */}
+        <button
+            type="submit"
+            disabled={isLoading}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+        >
+            {isLoading ? (
+                <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Calcolo in corso...
+                </>
+            ) : (
+                <>
+                    <Calculator className="w-5 h-5" />
+                    Genera Preventivo
+                </>
+            )}
         </button>
-      </div>
     </form>
   );
 };
