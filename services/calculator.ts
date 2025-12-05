@@ -56,6 +56,25 @@ const getVal = (params: Record<string, number>, possibleKeys: string[]): number 
     return 0;
 };
 
+// Common logic to find the row
+const findModelRow = (modelId: string, modelsConfig: ModelsConfig) => {
+    const normTarget = normalize(modelId);
+    const availableKeys = Object.keys(modelsConfig);
+
+    // 1. Exact normalized match
+    let matchedKey = availableKeys.find(k => normalize(k) === normTarget);
+
+    // 2. Inclusion match (longest first)
+    if (!matchedKey) {
+        const sortedKeys = [...availableKeys].sort((a, b) => b.length - a.length);
+        matchedKey = sortedKeys.find(k => {
+            const nK = normalize(k);
+            return nK === normTarget || nK.includes(normTarget) || normTarget.includes(nK);
+        });
+    }
+    return matchedKey ? { key: matchedKey, row: modelsConfig[matchedKey] } : null;
+};
+
 export const calculateInstallationHours = (
     modelId: string, 
     spots: number, 
@@ -68,30 +87,10 @@ export const calculateInstallationHours = (
     if (!modelId || spots <= 0) return 0;
     if (!modelsConfig) return 0;
 
-    const normTarget = normalize(modelId);
+    const match = findModelRow(modelId, modelsConfig);
+    if (!match) return 0;
+    const { key, row } = match;
     const availableKeys = Object.keys(modelsConfig);
-
-    // --- EXACT MATCH LOGIC (PRIORITY) ---
-    // 1. Try absolute strict equality on normalized strings
-    let matchedKey = availableKeys.find(k => normalize(k) === normTarget);
-
-    // 2. If not found, sort by length desc and find first inclusion
-    // This solves "Solarflex Urano Twin" vs "Solarflex Urano"
-    if (!matchedKey) {
-        const sortedKeys = [...availableKeys].sort((a, b) => b.length - a.length);
-        matchedKey = sortedKeys.find(k => {
-            const nK = normalize(k);
-            return nK === normTarget || nK.includes(normTarget) || normTarget.includes(nK);
-        });
-    }
-
-    if (!matchedKey) {
-        console.warn(`[Calculator] Model "${modelId}" not found in CSV keys.`);
-        return 0;
-    }
-
-    console.log(`[Calculator] Matching "${modelId}" -> "${matchedKey}"`);
-    const row = modelsConfig[matchedKey];
     
     // --- EXACT COLUMN MAPPING ---
     const base = getVal(row, ['ORE_INSTALLAZIONE_1PA']);
@@ -102,9 +101,6 @@ export const calculateInstallationHours = (
     let ballastTotalTime = 0;
     if (includeBallast) {
         const numBallasts = calculateBallastCount(spots);
-        
-        // Determine Ballast Time
-        // Try to look up the SPECIFIC BALLAST ROW first
         let timeFor2 = 0;
         
         if (selectedBallastId) {
@@ -116,15 +112,12 @@ export const calculateInstallationHours = (
              }
         }
 
-        // Fallback: Check if the Pergola Row has a generic ballast time
         if (timeFor2 === 0) {
              timeFor2 = getVal(row, ['ORE_INSTALLAZIONE_ZAVORRE']);
         }
 
-        // Logic: timeFor2 is for 2 ballasts (1 PA usually needs 2 ballasts approx, but user said "ore per 2 zavorre")
         if (timeFor2 > 0) {
-            // How many pairs of ballasts?
-            const pairs = numBallasts / 2; // Can be decimal? usually time is proportional
+            const pairs = numBallasts / 2; 
             ballastTotalTime = pairs * timeFor2; 
         }
     }
@@ -132,4 +125,93 @@ export const calculateInstallationHours = (
     const total = ((base + pv + gaskets) * spots) + ballastTotalTime;
     
     return Math.round(total * 100) / 100;
+};
+
+// Generates a human-readable explanation of the calculation
+export const explainCalculation = (
+    modelId: string, 
+    spots: number, 
+    includePV: boolean, 
+    includeGaskets: boolean,
+    includeBallast: boolean,
+    selectedBallastId: string | undefined,
+    modelsConfig: ModelsConfig | null,
+    totalTechs: number
+): string => {
+    if (!modelId || !modelsConfig) return "Seleziona un modello per vedere il calcolo.";
+    
+    const match = findModelRow(modelId, modelsConfig);
+    if (!match) return "Modello non trovato nel database CSV.";
+    const { key, row } = match;
+    const availableKeys = Object.keys(modelsConfig);
+
+    let explanation = `Analisi per il modello "${key}" su ${spots} posti auto:\n\n`;
+
+    // 1. Base Structure
+    const base = getVal(row, ['ORE_INSTALLAZIONE_1PA']);
+    explanation += `1. STRUTTURA: Il database indica ${base} ore per 1 posto auto.\n`;
+    explanation += `   -> ${base} ore x ${spots} posti = ${(base * spots).toFixed(2)} ore.\n`;
+
+    // 2. PV
+    if (includePV) {
+        const pv = getVal(row, ['ORE_INSTALLAZIONE_1PA_PF']);
+        explanation += `2. PANNELLI FOTOVOLTAICI (PF): Aggiunta di ${pv} ore per posto.\n`;
+        explanation += `   -> ${pv} ore x ${spots} posti = ${(pv * spots).toFixed(2)} ore extra.\n`;
+    }
+
+    // 3. Gaskets
+    if (includeGaskets) {
+        const gaskets = getVal(row, ['ORE_INSTALLAZIONE_1PA_PF_GUARNIZIONI']);
+        explanation += `3. GUARNIZIONI: Aggiunta di ${gaskets} ore per posto.\n`;
+        explanation += `   -> ${gaskets} ore x ${spots} posti = ${(gaskets * spots).toFixed(2)} ore extra.\n`;
+    }
+
+    // 4. Ballasts
+    let ballastTotalTime = 0;
+    if (includeBallast) {
+        const numBallasts = calculateBallastCount(spots);
+        let timeFor2 = 0;
+        let source = "dal modello pergola";
+        
+        if (selectedBallastId) {
+             const normBallast = normalize(selectedBallastId);
+             const ballastKey = availableKeys.find(k => normalize(k) === normBallast);
+             if (ballastKey) {
+                 const ballastRow = modelsConfig[ballastKey];
+                 timeFor2 = getVal(ballastRow, ['ORE_INSTALLAZIONE_ZAVORRE']);
+                 source = `specifico per "${ballastKey}"`;
+             }
+        }
+        if (timeFor2 === 0) {
+             timeFor2 = getVal(row, ['ORE_INSTALLAZIONE_ZAVORRE']);
+        }
+
+        if (timeFor2 > 0) {
+            const pairs = numBallasts / 2;
+            ballastTotalTime = pairs * timeFor2;
+            explanation += `4. ZAVORRE: Servono ${numBallasts} zavorre. Il tempo (${source}) è di ${timeFor2} ore ogni 2 zavorre.\n`;
+            explanation += `   -> Calcolo: (${numBallasts} / 2) * ${timeFor2} = ${ballastTotalTime.toFixed(2)} ore extra.\n`;
+        } else {
+            explanation += `4. ZAVORRE: Tempo non definito nel CSV per queste zavorre (0 ore aggiunte).\n`;
+        }
+    }
+
+    // Totals
+    const totalHours = ((base + (includePV ? getVal(row, ['ORE_INSTALLAZIONE_1PA_PF']) : 0) + (includeGaskets ? getVal(row, ['ORE_INSTALLAZIONE_1PA_PF_GUARNIZIONI']) : 0)) * spots) + ballastTotalTime;
+    
+    explanation += `\n---------------------------------\n`;
+    explanation += `TOTALE ORE LAVORO (Man-Hours): ${totalHours.toFixed(2)} ore\n`;
+    
+    if (totalTechs > 0) {
+        const hoursPerDay = totalTechs * 8;
+        const days = totalHours / hoursPerDay;
+        explanation += `\nCONVERSIONE IN GIORNI:\n`;
+        explanation += `Hai ${totalTechs} tecnici. Lavorano 8 ore al giorno ciascuno = ${hoursPerDay} ore lavorative giornaliere.\n`;
+        explanation += `-> ${totalHours.toFixed(2)} ore totali / ${hoursPerDay} ore/giorno = ${days.toFixed(2)} giorni.\n`;
+        explanation += `(Il sistema arrotonda a step di 0.5 giorni per sicurezza)`;
+    } else {
+        explanation += `\n(Seleziona dei tecnici per calcolare i giorni)`;
+    }
+
+    return explanation;
 };

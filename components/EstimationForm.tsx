@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { EstimateInputs, ServiceType, TransportMode, ModelsConfig, LogisticsConfig, PergolaModel, DiscountRule } from '../types';
-import { calculateInstallationHours, calculateBallastCount, normalize, getDynamicModelList, getBallastList } from '../services/calculator';
-import { Loader2, MapPin, Calendar, Truck, UserCog, Building2, LayoutGrid, CarFront, ArrowDownCircle, Users, CheckSquare, Weight, BoxSelect, RefreshCw, Calculator, Bug, Eye, Percent, Clock, FileText } from 'lucide-react';
+import { calculateInstallationHours, calculateBallastCount, normalize, getDynamicModelList, getBallastList, explainCalculation } from '../services/calculator';
+import { Loader2, MapPin, Calendar, Truck, UserCog, Building2, LayoutGrid, CarFront, ArrowDownCircle, Users, CheckSquare, Weight, BoxSelect, RefreshCw, Calculator, Bug, Eye, Percent, Clock, FileText, HelpCircle } from 'lucide-react';
 
 interface Props {
   onSubmit: (data: EstimateInputs) => void;
@@ -55,6 +55,10 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
   
   // Discount Logic
   const [discountPercent, setDiscountPercent] = useState<number>(0);
+
+  // Reasoning Display
+  const [showReasoning, setShowReasoning] = useState(false);
+  const [reasoningText, setReasoningText] = useState("");
 
   const [formData, setFormData] = useState<Omit<EstimateInputs, 'origin' | 'destination' | 'excludeOriginTransfer' | 'selectedModelId' | 'parkingSpots' | 'includePV' | 'includeGaskets' | 'includeFabric' | 'includeInsulatedPanels' | 'includeBallast' | 'calculatedHours' | 'useInternalTeam' | 'internalTechs' | 'useExternalTeam' | 'externalTechs' | 'modelsConfig' | 'hasForklift' | 'returnOnWeekends' | 'marginPercent' | 'extraHourlyCost' | 'extraDailyCost' | 'discountPercent'>>({
     serviceType: ServiceType.FULL_INSTALLATION,
@@ -150,6 +154,19 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
     const estimatedDays = hours > 0 ? Math.max(0.5, Math.ceil(estimatedDaysRaw * 2) / 2) : 1;
     
     setFormData(prev => ({ ...prev, durationDays: estimatedDays }));
+
+    // Prepare explanation text
+    const reasoning = explainCalculation(
+        selectedModelId, 
+        parkingSpots, 
+        includePV, 
+        includeGaskets, 
+        includeBallast, 
+        selectedBallastId, 
+        modelsConfig,
+        activeTechs
+    );
+    setReasoningText(reasoning);
   };
 
   useEffect(() => {
@@ -387,18 +404,42 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
                 )}
             </div>
 
-             <div className="md:col-span-2 p-3 bg-blue-50 border border-blue-100 rounded-lg flex items-center justify-between mt-2">
-                <div>
-                    <p className="text-xs text-blue-600 uppercase font-bold tracking-wider mb-1">Stima Tempi Installazione</p>
-                    <div className="flex items-baseline gap-2">
-                         <span className="text-2xl font-bold text-blue-900">{formData.durationDays}</span>
-                         <span className="text-sm text-blue-700">Giorni Lavorativi</span>
+             <div className="md:col-span-2 p-3 bg-blue-50 border border-blue-100 rounded-lg mt-2">
+                <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs text-blue-600 uppercase font-bold tracking-wider">Stima Tempi Installazione</p>
+                    <button 
+                        type="button" 
+                        onClick={() => setShowReasoning(!showReasoning)}
+                        className="text-xs text-blue-700 flex items-center gap-1 hover:underline"
+                    >
+                        <HelpCircle className="w-3 h-3" />
+                        Come è stato calcolato?
+                    </button>
+                </div>
+                
+                <div className="flex items-center gap-3">
+                     <div className="flex items-center gap-2">
+                        <input 
+                            type="number" 
+                            name="durationDays"
+                            value={formData.durationDays}
+                            onChange={handleChange}
+                            step="0.5"
+                            min="0.5"
+                            className="text-2xl font-bold text-blue-900 w-24 p-1 bg-white border border-blue-200 rounded text-center focus:ring-2 focus:ring-blue-400 outline-none"
+                        />
+                        <span className="text-sm text-blue-700 font-medium">Giorni Lavorativi</span>
+                     </div>
+                     <div className="h-10 w-10 bg-blue-200 rounded-full flex items-center justify-center text-blue-700 ml-auto">
+                        <Clock className="w-5 h-5" />
                     </div>
-                    <p className="text-xs text-blue-500 mt-1">({calculatedHours.toFixed(1)} ore totali / {((useInternalTeam ? internalTechs : 0) + (useExternalTeam ? externalTechs : 0)) * 8}h al giorno)</p>
                 </div>
-                <div className="h-10 w-10 bg-blue-200 rounded-full flex items-center justify-center text-blue-700">
-                    <Clock className="w-5 h-5" />
-                </div>
+
+                {showReasoning && (
+                    <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded text-xs text-slate-700 font-mono whitespace-pre-wrap animate-in fade-in slide-in-from-top-2">
+                        {reasoningText}
+                    </div>
+                )}
             </div>
             
              {/* Rientro Weekend Logic */}
