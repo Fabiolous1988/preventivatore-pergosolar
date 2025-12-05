@@ -78,13 +78,25 @@ export const calculateDeterministicCosts = (
     const externalTechs = inputs.useExternalTeam ? inputs.externalTechs : 0;
     const totalTechs = internalTechs + externalTechs;
     
-    // Determine Work Hours (Man-Hours)
-    // If calculatedHours is passed (from calculator.ts), use it. Otherwise derive from days * 8 * techs
-    // However, for cost calculation, we usually pay based on the days blocked.
-    // Let's align with the previous AI logic: Cost is based on "Duration Days * 8 hours/day * Rate"
-    const paidHoursPerTech = days * 8; 
+    // --- 3. DETERMINE WORK HOURS (Labor) ---
+    // If user edited manual hours (internalHours / externalHours), use them directly.
+    // Otherwise fallback to Days * 8 * Techs logic (standard).
+    
+    let internalLaborHours = 0;
+    if (inputs.internalHours !== undefined && inputs.internalHours > 0) {
+        internalLaborHours = inputs.internalHours;
+    } else {
+        internalLaborHours = days * 8 * internalTechs;
+    }
 
-    // --- 3. INTERNAL TEAM COSTS ---
+    let externalLaborHours = 0;
+    if (inputs.externalHours !== undefined && inputs.externalHours > 0) {
+        externalLaborHours = inputs.externalHours;
+    } else {
+        externalLaborHours = days * 8 * externalTechs;
+    }
+
+    // --- 4. INTERNAL TEAM COSTS ---
     let internalTravelCost = 0;
     let internalTravelTimeCost = 0;
     let internalHotelCost = 0;
@@ -93,8 +105,8 @@ export const calculateDeterministicCosts = (
     let isWeekendReturnApplied = false;
 
     if (internalTechs > 0) {
-        // A. Labor (Work on site)
-        internalLaborCost = paidHoursPerTech * config.internalHourlyRate * internalTechs;
+        // A. Labor (Work on site) - Uses the precise hours calculated above
+        internalLaborCost = internalLaborHours * config.internalHourlyRate;
 
         // B. Travel Costs (Only for Internal)
         // Scenario: Company Vehicle
@@ -156,14 +168,15 @@ export const calculateDeterministicCosts = (
         }
     }
 
-    // --- 4. EXTERNAL TEAM COSTS ---
+    // --- 5. EXTERNAL TEAM COSTS ---
     let externalLaborCost = 0;
     if (externalTechs > 0) {
         // External teams are all-inclusive. No travel, no hotel calculated separately.
-        externalLaborCost = paidHoursPerTech * config.externalHourlyRate * externalTechs;
+        // Use the precise hours calculated above
+        externalLaborCost = externalLaborHours * config.externalHourlyRate;
     }
 
-    // --- 5. LOGISTICS & EXTRAS ---
+    // --- 6. LOGISTICS & EXTRAS ---
     let forkliftCost = 0;
     let materialTransportCost = 0;
     let logisticsMethod = "Furgone Aziendale (Standard)";
@@ -213,7 +226,7 @@ export const calculateDeterministicCosts = (
         }
     }
     
-    // --- 6. TOTALS & MARGIN ---
+    // --- 7. TOTALS & MARGIN ---
     const totalCost = 
         internalLaborCost + 
         internalTravelCost + 
@@ -259,7 +272,7 @@ export const calculateDeterministicCosts = (
         marginAmount,
         isWeekendReturnApplied,
         activeTechs: totalTechs,
-        totalManHours: paidHoursPerTech * totalTechs,
+        totalManHours: internalLaborHours + externalLaborHours,
         logisticsMethod
     };
 };

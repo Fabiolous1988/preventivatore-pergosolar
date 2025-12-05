@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { EstimateInputs, ServiceType, TransportMode, ModelsConfig, LogisticsConfig, PergolaModel, DiscountRule } from '../types';
 import { calculateInstallationHours, calculateBallastCount, normalize, getDynamicModelList, getBallastList, explainCalculation } from '../services/calculator';
-import { Loader2, MapPin, Calendar, Truck, UserCog, Building2, LayoutGrid, CarFront, ArrowDownCircle, Users, CheckSquare, Weight, BoxSelect, RefreshCw, Calculator, Bug, Eye, Percent, Clock, FileText, HelpCircle } from 'lucide-react';
+import { Loader2, MapPin, Calendar, Truck, UserCog, Building2, LayoutGrid, CarFront, ArrowDownCircle, Users, CheckSquare, Weight, BoxSelect, RefreshCw, Calculator, Bug, Eye, Percent, Clock, FileText, HelpCircle, Timer } from 'lucide-react';
 
 interface Props {
   onSubmit: (data: EstimateInputs) => void;
@@ -49,7 +49,6 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
   const [includeInsulatedPanels, setIncludeInsulatedPanels] = useState<boolean>(false);
   const [includeBallast, setIncludeBallast] = useState<boolean>(false);
 
-  const [calculatedHours, setCalculatedHours] = useState<number>(0);
   const [hasForklift, setHasForklift] = useState<boolean>(false);
   const [returnOnWeekends, setReturnOnWeekends] = useState<boolean>(false);
   
@@ -66,6 +65,8 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
     startDate: new Date().toISOString().split('T')[0],
     durationDays: 1,
     additionalNotes: 'Necessarie stanze singole per alloggio tecnici.',
+    internalHours: 0,
+    externalHours: 0
   });
 
   // Load lists from config
@@ -127,12 +128,13 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
   const selectedModel = availableModels.find(m => m.id === selectedModelId);
   const ballastCount = includeBallast ? calculateBallastCount(parkingSpots) : 0;
 
+  // -- MAIN CALCULATION EFFECT --
   const performCalculation = () => {
     // Only calculate automatically for Full Installation
     if (formData.serviceType !== ServiceType.FULL_INSTALLATION) return;
 
-    // Note: Fabric and Insulated Panels currently do not add time, as per user instructions
-    const hours = calculateInstallationHours(
+    // 1. Calculate base Total Hours from CSV
+    const totalHours = calculateInstallationHours(
         selectedModelId, 
         parkingSpots, 
         includePV, 
@@ -141,19 +143,28 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
         selectedBallastId, 
         modelsConfig
     );
-    setCalculatedHours(hours);
     
-    const activeTechs = (useInternalTeam ? internalTechs : 0) + (useExternalTeam ? externalTechs : 0);
-    const techs = activeTechs > 0 ? activeTechs : 1;
-    const hoursPerDay = techs * 8; // Standard 8 hours per tech
+    const activeInternal = useInternalTeam ? internalTechs : 0;
+    const activeExternal = useExternalTeam ? externalTechs : 0;
+    const totalTechs = activeInternal + activeExternal;
+    const techs = totalTechs > 0 ? totalTechs : 1;
+    
+    // 2. Distribute Hours based on team size
+    const internalShare = totalTechs > 0 ? (totalHours * (activeInternal / totalTechs)) : 0;
+    const externalShare = totalTechs > 0 ? (totalHours * (activeExternal / totalTechs)) : 0;
 
+    // 3. Calculate Days
     // Formula: Total Hours / (Techs * 8)
-    const estimatedDaysRaw = hours / hoursPerDay;
+    const hoursPerDay = techs * 8; 
+    const estimatedDaysRaw = totalHours / hoursPerDay;
+    const estimatedDays = totalHours > 0 ? Math.max(0.5, Math.ceil(estimatedDaysRaw * 2) / 2) : 1;
     
-    // Round to nearest 0.5 for better planning, but ensure at least 0.5 days
-    const estimatedDays = hours > 0 ? Math.max(0.5, Math.ceil(estimatedDaysRaw * 2) / 2) : 1;
-    
-    setFormData(prev => ({ ...prev, durationDays: estimatedDays }));
+    setFormData(prev => ({ 
+        ...prev, 
+        durationDays: estimatedDays,
+        internalHours: parseFloat(internalShare.toFixed(2)),
+        externalHours: parseFloat(externalShare.toFixed(2))
+    }));
 
     // Prepare explanation text
     const reasoning = explainCalculation(
@@ -164,7 +175,7 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
         includeBallast, 
         selectedBallastId, 
         modelsConfig,
-        activeTechs
+        totalTechs
     );
     setReasoningText(reasoning);
   };
@@ -172,6 +183,56 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
   useEffect(() => {
     performCalculation();
   }, [selectedModelId, parkingSpots, includePV, includeGaskets, includeBallast, selectedBallastId, formData.serviceType, useInternalTeam, internalTechs, useExternalTeam, externalTechs, modelsConfig]);
+
+  // -- HANDLERS FOR EDITABLE HOURS --
+  const updateDaysFromHours = (totalH: number) => {
+      const activeInternal = useInternalTeam ? internalTechs : 0;
+      const activeExternal = useExternalTeam ? externalTechs : 0;
+      const totalTechs = activeInternal + activeExternal;
+      const techs = totalTechs > 0 ? totalTechs : 1;
+      
+      const hoursPerDay = techs * 8;
+      const estimatedDaysRaw = totalH / hoursPerDay;
+      const estimatedDays = totalH > 0 ? Math.max(0.5, Math.ceil(estimatedDaysRaw * 2) / 2) : 0.5;
+      
+      setFormData(prev => ({ ...prev, durationDays: estimatedDays }));
+  };
+
+  const handleTotalHoursChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const newTotal = parseFloat(e.target.value) || 0;
+      const activeInternal = useInternalTeam ? internalTechs : 0;
+      const activeExternal = useExternalTeam ? externalTechs : 0;
+      const totalTechs = activeInternal + activeExternal;
+      
+      // Redistribute
+      const internalShare = totalTechs > 0 ? (newTotal * (activeInternal / totalTechs)) : 0;
+      const externalShare = totalTechs > 0 ? (newTotal * (activeExternal / totalTechs)) : 0;
+
+      setFormData(prev => ({
+          ...prev,
+          internalHours: parseFloat(internalShare.toFixed(2)),
+          externalHours: parseFloat(externalShare.toFixed(2))
+      }));
+      updateDaysFromHours(newTotal);
+  };
+
+  const handleInternalHoursChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const newInternal = parseFloat(e.target.value) || 0;
+      const currentExternal = formData.externalHours || 0;
+      const newTotal = newInternal + currentExternal;
+      
+      setFormData(prev => ({ ...prev, internalHours: newInternal }));
+      updateDaysFromHours(newTotal);
+  };
+
+  const handleExternalHoursChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const newExternal = parseFloat(e.target.value) || 0;
+      const currentInternal = formData.internalHours || 0;
+      const newTotal = newExternal + currentInternal;
+      
+      setFormData(prev => ({ ...prev, externalHours: newExternal }));
+      updateDaysFromHours(newTotal);
+  };
 
   const handleAddressChange = (type: 'origin' | 'destination', field: keyof AddressState, value: string) => {
     if (type === 'origin') setOrigin(prev => ({ ...prev, [field]: value }));
@@ -208,7 +269,7 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
       includeFabric,
       includeInsulatedPanels,
       includeBallast,
-      calculatedHours,
+      calculatedHours: (formData.internalHours || 0) + (formData.externalHours || 0),
       hasForklift,
       returnOnWeekends,
       modelsConfig,
@@ -218,6 +279,8 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
       discountPercent
     });
   };
+
+  const totalDisplayedHours = (formData.internalHours || 0) + (formData.externalHours || 0);
 
   return (
     <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-8">
@@ -406,7 +469,7 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
 
              <div className="md:col-span-2 p-3 bg-blue-50 border border-blue-100 rounded-lg mt-2">
                 <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs text-blue-600 uppercase font-bold tracking-wider">Stima Tempi Installazione</p>
+                    <p className="text-xs text-blue-600 uppercase font-bold tracking-wider">Stima Tempi & Manodopera</p>
                     <button 
                         type="button" 
                         onClick={() => setShowReasoning(!showReasoning)}
@@ -432,6 +495,49 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
                      </div>
                      <div className="h-10 w-10 bg-blue-200 rounded-full flex items-center justify-center text-blue-700 ml-auto">
                         <Clock className="w-5 h-5" />
+                    </div>
+                </div>
+
+                {/* Editable Hours Breakdown */}
+                <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-blue-100">
+                    <div className="text-center">
+                        <p className="text-[10px] text-blue-600 uppercase font-bold flex items-center justify-center gap-1"><Timer className="w-3 h-3"/> Totale</p>
+                        <div className="flex items-center justify-center">
+                            <input 
+                                type="number" 
+                                value={totalDisplayedHours.toFixed(2)}
+                                onChange={handleTotalHoursChange}
+                                step="0.5"
+                                className="w-20 p-1 text-center text-sm font-bold text-blue-900 bg-white border border-blue-200 rounded focus:ring-1 focus:ring-blue-400 outline-none"
+                            />
+                            <span className="text-xs text-blue-800 ml-1">h</span>
+                        </div>
+                    </div>
+                    <div className={`text-center rounded p-1 ${useInternalTeam ? 'bg-white/60' : 'opacity-40'}`}>
+                        <p className="text-[10px] text-slate-500 uppercase">Interne</p>
+                        <div className="flex items-center justify-center">
+                             <input 
+                                type="number"
+                                value={formData.internalHours || 0}
+                                onChange={handleInternalHoursChange}
+                                disabled={!useInternalTeam}
+                                className="w-16 p-1 text-center text-sm font-semibold text-slate-700 bg-transparent border-b border-slate-300 focus:border-blue-500 focus:outline-none disabled:text-slate-400"
+                            />
+                            <span className="text-xs text-slate-600 ml-1">h</span>
+                        </div>
+                    </div>
+                    <div className={`text-center rounded p-1 ${useExternalTeam ? 'bg-white/60' : 'opacity-40'}`}>
+                        <p className="text-[10px] text-slate-500 uppercase">Esterne</p>
+                        <div className="flex items-center justify-center">
+                             <input 
+                                type="number"
+                                value={formData.externalHours || 0}
+                                onChange={handleExternalHoursChange}
+                                disabled={!useExternalTeam}
+                                className="w-16 p-1 text-center text-sm font-semibold text-slate-700 bg-transparent border-b border-slate-300 focus:border-blue-500 focus:outline-none disabled:text-slate-400"
+                            />
+                            <span className="text-xs text-slate-600 ml-1">h</span>
+                        </div>
                     </div>
                 </div>
 

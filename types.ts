@@ -40,6 +40,10 @@ export interface EstimateInputs {
   includeBallast?: boolean; // New: Zavorre
   calculatedHours?: number; // Internal use: passed to AI
   
+  // Explicit hours split (Editable by user)
+  internalHours?: number;
+  externalHours?: number;
+  
   // Logistics
   hasForklift?: boolean; // New: Does customer have forklift?
   returnOnWeekends?: boolean; // New: Do techs return home on weekends?
