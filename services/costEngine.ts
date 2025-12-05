@@ -1,36 +1,5 @@
 
-
-import { EstimateInputs, AppConfig, ModelsConfig, LogisticsConfig, TransportMode } from "../types";
-
-export interface ComputedCosts {
-    distanceKm: number;
-    travelDurationHours: number;
-    
-    // Internal Team Costs
-    internalTravelCost: number; // (Km * rate) + tolls
-    internalTravelTimeCost: number; // Hours * HourlyRate
-    internalHotelCost: number;
-    internalPerDiemCost: number; // Vitto
-    internalLaborCost: number;
-    
-    // External Team Costs
-    externalLaborCost: number; // Rate * Hours (All inclusive)
-    
-    // Logistics
-    forkliftCost: number;
-    materialTransportCost: number;
-    
-    // Totals
-    totalCost: number;
-    salesPrice: number;
-    marginAmount: number;
-    
-    // Meta for AI explanation
-    isWeekendReturnApplied: boolean;
-    activeTechs: number;
-    totalManHours: number;
-    logisticsMethod: string;
-}
+import { EstimateInputs, AppConfig, ModelsConfig, LogisticsConfig, TransportMode, ComputedCosts } from "../types";
 
 // Helper to check if a date range includes a weekend (Saturday or Sunday)
 const hasWeekendOverlap = (startDate: string, durationDays: number): boolean => {
@@ -58,8 +27,13 @@ export const calculateDeterministicCosts = (
     durationText: string // e.g. "3 hours 20 mins"
 ): ComputedCosts => {
     
+    // Initialize Explanation Logs
+    let laborLog = "";
+    let travelLog = "";
+    let livingLog = "";
+    let logisticsLog = "";
+
     // --- 1. PARSE DURATION ---
-    // Rough parse of text like "3 ore e 20 min" to decimal hours
     let travelTimeOneWay = 0;
     const hoursMatch = durationText.match(/(\d+)\s*(?:h|ora|ore)/i);
     const minsMatch = durationText.match(/(\d+)\s*min/i);
@@ -67,9 +41,11 @@ export const calculateDeterministicCosts = (
     if (hoursMatch) travelTimeOneWay += parseInt(hoursMatch[1]);
     if (minsMatch) travelTimeOneWay += parseInt(minsMatch[1]) / 60;
     
-    // Fallback if parsing fails but we have distance (avg speed 80km/h)
     if (travelTimeOneWay === 0 && distanceKm > 0) {
         travelTimeOneWay = distanceKm / 80; 
+        travelLog += `• Durata viaggio stimata su media 80km/h: ${travelTimeOneWay.toFixed(1)} ore.\n`;
+    } else {
+        travelLog += `• Durata viaggio da Maps: ${durationText}.\n`;
     }
 
     // --- 2. SETUP BASICS ---
@@ -78,22 +54,25 @@ export const calculateDeterministicCosts = (
     const externalTechs = inputs.useExternalTeam ? inputs.externalTechs : 0;
     const totalTechs = internalTechs + externalTechs;
     
-    // --- 3. DETERMINE WORK HOURS (Labor) ---
-    // If user edited manual hours (internalHours / externalHours), use them directly.
-    // Otherwise fallback to Days * 8 * Techs logic (standard).
+    laborLog += `• Durata Cantiere: ${days} giorni lavorativi.\n`;
     
+    // --- 3. DETERMINE WORK HOURS (Labor) ---
     let internalLaborHours = 0;
     if (inputs.internalHours !== undefined && inputs.internalHours > 0) {
         internalLaborHours = inputs.internalHours;
+        laborLog += `• Ore Interne (Manuale): ${internalLaborHours.toFixed(2)}h totali.\n`;
     } else {
         internalLaborHours = days * 8 * internalTechs;
+        laborLog += `• Ore Interne (Stimate): ${days}gg * 8h * ${internalTechs} tecnici = ${internalLaborHours.toFixed(2)}h.\n`;
     }
 
     let externalLaborHours = 0;
     if (inputs.externalHours !== undefined && inputs.externalHours > 0) {
         externalLaborHours = inputs.externalHours;
+        laborLog += `• Ore Esterne (Manuale): ${externalLaborHours.toFixed(2)}h totali.\n`;
     } else {
         externalLaborHours = days * 8 * externalTechs;
+        laborLog += `• Ore Esterne (Stimate): ${days}gg * 8h * ${externalTechs} tecnici = ${externalLaborHours.toFixed(2)}h.\n`;
     }
 
     // --- 4. INTERNAL TEAM COSTS ---
@@ -105,75 +84,77 @@ export const calculateDeterministicCosts = (
     let isWeekendReturnApplied = false;
 
     if (internalTechs > 0) {
-        // A. Labor (Work on site) - Uses the precise hours calculated above
+        // A. Labor
         internalLaborCost = internalLaborHours * config.internalHourlyRate;
+        laborLog += `• Costo Interno: ${internalLaborHours.toFixed(2)}h * €${config.internalHourlyRate}/h = €${internalLaborCost.toFixed(2)}.\n`;
 
-        // B. Travel Costs (Only for Internal)
-        // Scenario: Company Vehicle
+        // B. Travel Costs
         if (inputs.transportMode === TransportMode.COMPANY_VEHICLE) {
-            const costPerKm = 0.45; // Average generic cost (fuel + wear) or roughly derived from prompt rules
-            const highwayTollEst = (distanceKm / 10) * 1.0; // Approx 0.10 EUR/km for tolls
+            const costPerKm = 0.45; 
+            const highwayTollEst = (distanceKm / 10) * 1.0; 
             
-            // Standard Trip: Origin -> Dest -> Origin
             let trips = 1; 
-
-            // Weekend Return Rule
             if (inputs.returnOnWeekends && hasWeekendOverlap(inputs.startDate, days)) {
-                trips = 2; // Techs go home for weekend and come back
+                trips = 2;
                 isWeekendReturnApplied = true;
+                travelLog += `• Rientro Weekend: Applicato (Viaggi raddoppiati).\n`;
             }
 
             const totalDistKm = distanceKm * 2 * trips;
-            internalTravelCost = (totalDistKm * costPerKm) + (highwayTollEst * 2 * trips);
+            const fuelWearCost = totalDistKm * costPerKm;
+            const tollCost = highwayTollEst * 2 * trips;
+            internalTravelCost = fuelWearCost + tollCost;
             
-            // Travel Time (Labor cost while driving)
-            // Assuming all internal techs are paid for travel time
+            travelLog += `• Veicolo Aziendale (${trips} viaggi A/R):\n`;
+            travelLog += `  - Distanza Totale: ${totalDistKm.toFixed(0)} km\n`;
+            travelLog += `  - Costo Km (€0.45): €${fuelWearCost.toFixed(2)}\n`;
+            travelLog += `  - Pedaggi Stimati: €${tollCost.toFixed(2)}\n`;
+
+            // Travel Time
             const totalTravelHours = travelTimeOneWay * 2 * trips;
             internalTravelTimeCost = totalTravelHours * config.internalHourlyRate * internalTechs;
-        } 
-        // Scenario: Public Transport
-        else {
-            // Estimate Ticket cost (approx 0.15 EUR/km per person)
+            travelLog += `• Tempo Guida Tecnici:\n`;
+            travelLog += `  - Ore Totali: ${totalTravelHours.toFixed(2)}h * ${internalTechs} tecnici\n`;
+            travelLog += `  - Costo: €${internalTravelTimeCost.toFixed(2)}\n`;
+
+        } else {
+            // Public Transport
             const ticketCost = (distanceKm * 0.15) * 2 * internalTechs; 
             internalTravelCost = ticketCost;
+            travelLog += `• Mezzi Pubblici: Stima biglietti €${ticketCost.toFixed(2)} (${internalTechs} persone A/R).\n`;
             
-            // Travel Time (paid less or full? assuming full for simplicity as per previous logic)
             const totalTravelHours = travelTimeOneWay * 2;
             internalTravelTimeCost = totalTravelHours * config.internalHourlyRate * internalTechs;
+            travelLog += `• Tempo Viaggio (Labor): €${internalTravelTimeCost.toFixed(2)}.\n`;
         }
 
-        // C. Living Costs (Hotel + Food)
-        // Per Diem (Vitto): 50 EUR/day per tech
+        // C. Living Costs
         internalPerDiemCost = 50 * days * internalTechs;
+        livingLog += `• Diaria/Vitto: €50 * ${days}gg * ${internalTechs} pers. = €${internalPerDiemCost.toFixed(2)}.\n`;
 
-        // Hotel: If duration > 1 day. Nights = Math.ceil(days) - 1
-        // If they return on weekend, nights might be less, but let's stick to standard logic:
-        // If 5 days work, 4 nights hotel.
         let nights = Math.max(0, Math.ceil(days) - 1);
-        
-        // Adjust nights if weekend return reduces hotel stay? 
-        // Usually weekend return means they DON'T stay in hotel Sat/Sun night.
-        // For safety/simplicity of this version, we keep standard calculation or subtract 2 nights if weekend return.
         if (isWeekendReturnApplied) {
             nights = Math.max(0, nights - 2);
+            livingLog += `• Hotel: Riduzione notti per rientro weekend.\n`;
         }
 
-        const avgHotelPrice = 80; // EUR/night/person
+        const avgHotelPrice = 80;
         internalHotelCost = nights * avgHotelPrice * internalTechs;
+        livingLog += `• Hotel: ${nights} notti * €${avgHotelPrice} * ${internalTechs} pers. = €${internalHotelCost.toFixed(2)}.\n`;
         
-        // Add Local Displacement (Hotel <-> Site)
-        // 15km * 2 * 2 (round trip) * days * costPerKm
+        // Local Displacement
         if (nights > 0 && inputs.transportMode === TransportMode.COMPANY_VEHICLE) {
-            internalTravelCost += (15 * 4 * days * 0.45);
+            const localDisplacement = (15 * 4 * days * 0.45);
+            internalTravelCost += localDisplacement;
+            travelLog += `• Spostamenti Locali (Hotel-Cantiere): €${localDisplacement.toFixed(2)}.\n`;
         }
     }
 
     // --- 5. EXTERNAL TEAM COSTS ---
     let externalLaborCost = 0;
     if (externalTechs > 0) {
-        // External teams are all-inclusive. No travel, no hotel calculated separately.
-        // Use the precise hours calculated above
         externalLaborCost = externalLaborHours * config.externalHourlyRate;
+        laborLog += `• Costo Esterno (All-in): ${externalLaborHours.toFixed(2)}h * €${config.externalHourlyRate}/h = €${externalLaborCost.toFixed(2)}.\n`;
     }
 
     // --- 6. LOGISTICS & EXTRAS ---
@@ -183,46 +164,41 @@ export const calculateDeterministicCosts = (
 
     // Forklift Rule
     if (inputs.includeBallast && !inputs.hasForklift) {
-        // Base 700 up to 5 days
         forkliftCost = 700;
+        let extraText = "";
         if (days > 5) {
             const extraDays = Math.ceil(days) - 5;
             forkliftCost += (extraDays * 120);
+            extraText = ` (+ ${extraDays}gg extra)`;
         }
+        logisticsLog += `• Noleggio Muletto: €${forkliftCost.toFixed(2)} (Base €700${extraText}).\n`;
     }
 
-    // Trucking Logic (Simplified Weight Check)
-    // Ballast Weight approx 80kg/block * count? Or 1600kg total provided in inputs?
-    // Let's estimate total weight roughly
-    const ballastWeight = inputs.includeBallast ? (inputs.parkingSpots || 0) * 1600 : 0; // Using the heavy estimate logic from prompt
+    const ballastWeight = inputs.includeBallast ? (inputs.parkingSpots || 0) * 1600 : 0; 
     
-    // Check Logistics Config for specific province costs
-    // Extract province from destination
+    // Check Logistics Config
     const provMatch = inputs.destination.match(/\b([A-Z]{2})\b/);
     const destProv = provMatch ? provMatch[1] : null;
 
     if (destProv && inputs.logisticsConfig && inputs.logisticsConfig[destProv]) {
-        // Use Tabular Data if available
-        // Heuristic: If weight > 2000kg, use Bilico/Gru cost from table
         const provCosts = inputs.logisticsConfig[destProv];
         if (ballastWeight > 2000) {
-            // Find highest relevant cost or specific key
             const costKeys = Object.keys(provCosts);
-            // Look for "BILICO", "CAMION", "GRU"
             const heavyKey = costKeys.find(k => k.includes('BILICO') || k.includes('GRU') || k.includes('CAMION'));
             if (heavyKey) {
                 materialTransportCost = provCosts[heavyKey];
                 logisticsMethod = heavyKey;
+                logisticsLog += `• Trasporto Materiale (Tabella ${destProv}): €${materialTransportCost.toFixed(2)} [${logisticsMethod}].\n`;
             }
         }
     } else {
-        // Fallback Logic
         if (ballastWeight > 1200) {
-            // Needs dedicated transport if not in table
-            // Rough estimate: 1.5 EUR/km for heavy truck one way
             materialTransportCost = distanceKm * 1.5;
-            if (materialTransportCost < 300) materialTransportCost = 300; // Min charge
+            if (materialTransportCost < 300) materialTransportCost = 300; 
             logisticsMethod = "Trasporto Dedicato (Stima)";
+            logisticsLog += `• Trasporto Dedicato (Peso > 1200kg): €${materialTransportCost.toFixed(2)} (stimato su km).\n`;
+        } else {
+            logisticsLog += `• Trasporto Materiale: Incluso nei mezzi aziendali (Peso contenuto).\n`;
         }
     }
     
@@ -237,23 +213,12 @@ export const calculateDeterministicCosts = (
         forkliftCost + 
         materialTransportCost;
 
-    // Margin Calculation
-    // Sales Price = Total Cost / (1 - Margin%)
-    // But we need to handle the Discount Logic asked by user.
-    // The discount (inputs.discountPercent) applies to the FINAL Price.
-    
     let targetMarginDecimal = inputs.marginPercent / 100;
-    let grossSalesPrice = 0;
+    if (targetMarginDecimal >= 0.99) targetMarginDecimal = 0.99;
     
-    if (targetMarginDecimal >= 0.99) targetMarginDecimal = 0.99; // Safety
-    
-    grossSalesPrice = totalCost / (1 - targetMarginDecimal);
-    
-    // Apply Discount
+    const grossSalesPrice = totalCost / (1 - targetMarginDecimal);
     const discountAmount = grossSalesPrice * (inputs.discountPercent ? inputs.discountPercent / 100 : 0);
     const finalSalesPrice = grossSalesPrice - discountAmount;
-    
-    // Recalculate actual margin amount based on discounted price
     const marginAmount = finalSalesPrice - totalCost;
 
     return {
@@ -273,6 +238,13 @@ export const calculateDeterministicCosts = (
         isWeekendReturnApplied,
         activeTechs: totalTechs,
         totalManHours: internalLaborHours + externalLaborHours,
-        logisticsMethod
+        logisticsMethod,
+        categoryExplanations: {
+            "Lavoro": laborLog,
+            "Viaggio": travelLog,
+            "Vitto/Alloggio": livingLog,
+            "Altro": logisticsLog,
+            "Viaggio/Logistica": travelLog + "\n" + logisticsLog // Fallback combination
+        }
     };
 };

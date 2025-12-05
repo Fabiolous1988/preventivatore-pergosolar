@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { EstimateResult, TransportOption, CostItem } from '../types';
 import CostChart from './CostChart';
-import { FileText, TrendingUp, Info, Train, Plane, Car, CheckCircle2, AlertCircle, Briefcase, BedDouble, MapPin, Download, Pencil, RotateCcw, Save } from 'lucide-react';
+import { FileText, TrendingUp, Info, Train, Plane, Car, CheckCircle2, AlertCircle, Briefcase, BedDouble, MapPin, Download, Pencil, RotateCcw, Save, HelpCircle, BoxSelect } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -14,11 +14,15 @@ const ResultsDisplay: React.FC<Props> = ({ result }) => {
   const [selectedOptionIndex, setSelectedOptionIndex] = useState(0);
   const [isEditMode, setIsEditMode] = useState(false);
   const [editedOptions, setEditedOptions] = useState<TransportOption[]>([]);
+  
+  // Track open tooltip for category explanation
+  const [activeReasoning, setActiveReasoning] = useState<string | null>(null);
 
   // Reset selection and edit state when result changes (new AI generation)
   useEffect(() => {
     setSelectedOptionIndex(0);
     setIsEditMode(false);
+    setActiveReasoning(null);
     if (result && result.options) {
       // Deep copy for editing
       setEditedOptions(JSON.parse(JSON.stringify(result.options)));
@@ -192,12 +196,37 @@ const ResultsDisplay: React.FC<Props> = ({ result }) => {
 
   const renderCostSection = (title: string, items: CostItem[], categoryKey: string, icon: React.ReactNode, colorClass: string) => {
       if (items.length === 0) return null;
+      
+      const explanation = activeOption.categoryExplanations?.[categoryKey];
+
       return (
-        <div>
+        <div className="relative">
             <h4 className={`text-sm font-bold text-slate-900 px-3 py-1 rounded-md flex justify-between items-center ${colorClass}`}>
-                <span className="flex items-center gap-2">{icon} {title}</span>
+                <div className="flex items-center gap-2">
+                    {icon} 
+                    {title}
+                    {explanation && (
+                        <button 
+                            type="button"
+                            onClick={() => setActiveReasoning(activeReasoning === categoryKey ? null : categoryKey)}
+                            className="text-slate-500 hover:text-blue-600 focus:outline-none"
+                            title="Vedi dettaglio calcolo"
+                        >
+                            <HelpCircle className="w-3.5 h-3.5" />
+                        </button>
+                    )}
+                </div>
                 <span>€{getCategoryTotal(items).toFixed(2)}</span>
             </h4>
+            
+            {/* Reasoning Popover */}
+            {activeReasoning === categoryKey && explanation && (
+                <div className="mb-3 mt-1 p-3 bg-yellow-50 border border-yellow-200 rounded text-xs text-slate-700 font-mono whitespace-pre-wrap animate-in fade-in z-20 relative shadow-sm">
+                    <p className="font-bold text-yellow-800 mb-1 flex items-center gap-1"><Info className="w-3 h-3"/> Logica Calcolo:</p>
+                    {explanation}
+                </div>
+            )}
+
             <div className="mt-2 pl-4 space-y-2">
                 {items.map((item, idx) => (
                     <div key={idx} className="flex justify-between text-sm items-center">
@@ -315,45 +344,48 @@ const ResultsDisplay: React.FC<Props> = ({ result }) => {
             </h3>
             
             <div className="space-y-6 flex-1">
-                {renderCostSection("Lavoro (Manodopera)", groupedCosts.Lavoro, "Lavoro", <Briefcase className="w-4 h-4" />, "bg-slate-100")}
-                {renderCostSection("Viaggio & Logistica", groupedCosts.Viaggio, "Viaggio", <MapPin className="w-4 h-4" />, "bg-blue-50")}
-                {renderCostSection("Vitto & Alloggio", groupedCosts.VittoAlloggio, "Vitto/Alloggio", <BedDouble className="w-4 h-4" />, "bg-orange-50")}
-                
-                {/* Fallback for unknown categories */}
-                {groupedCosts.Altro.length > 0 && renderCostSection("Altro", groupedCosts.Altro, "Altro", <Info className="w-4 h-4" />, "bg-gray-100")}
+                {renderCostSection("Manodopera", groupedCosts.Lavoro, "Lavoro", <Briefcase className="w-4 h-4 text-blue-600"/>, "bg-blue-50 border border-blue-100 text-blue-800")}
+                {renderCostSection("Viaggio & Trasporti", groupedCosts.Viaggio, "Viaggio", <Car className="w-4 h-4 text-emerald-600"/>, "bg-emerald-50 border border-emerald-100 text-emerald-800")}
+                {renderCostSection("Vitto & Alloggio", groupedCosts.VittoAlloggio, "Vitto/Alloggio", <BedDouble className="w-4 h-4 text-amber-600"/>, "bg-amber-50 border border-amber-100 text-amber-800")}
+                {renderCostSection("Logistica & Altro", groupedCosts.Altro, "Altro", <BoxSelect className="w-4 h-4 text-purple-600"/>, "bg-purple-50 border border-purple-100 text-purple-800")}
             </div>
 
-             <div className="flex justify-between items-center pt-4 font-bold text-slate-900 border-t border-slate-200 mt-6">
-                <span>Totale Costi Vivi</span>
-                <span>€{(activeOption.totalCost || 0).toFixed(2)}</span>
+            <div className="mt-4 pt-4 border-t border-slate-100 text-xs text-slate-400">
+                <p>Clicca l'icona <HelpCircle className="w-3 h-3 inline"/> per vedere il calcolo specifico di ogni voce.</p>
             </div>
         </div>
 
-        {/* Visual Chart */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col">
-            <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-blue-500" /> Distribuzione Costi
-            </h3>
-            <div className="flex-1 min-h-[250px] flex items-center justify-center">
-                <CostChart items={activeOption.breakdown || []} />
+        {/* Visualization & Logistics */}
+        <div className="space-y-6">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                    <TrendingUp className="w-5 h-5 text-purple-500" /> Ripartizione Spese
+                </h3>
+                <div className="h-64 w-full">
+                    <CostChart items={activeOption.breakdown} />
+                </div>
             </div>
-             <div className="mt-4 p-4 bg-slate-50 rounded-lg border border-slate-100 text-sm text-slate-600">
-                 <strong>Dettaglio Logistica:</strong>
-                 <p className="mt-1">{activeOption.logisticsSummary}</p>
-             </div>
+
+            <div className="bg-slate-50 p-6 rounded-xl border border-slate-200">
+                <h3 className="text-sm font-bold text-slate-700 mb-2 uppercase flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-green-600" /> Strategia Logistica
+                </h3>
+                <p className="text-sm text-slate-600 leading-relaxed bg-white p-3 rounded border border-slate-200">
+                    {activeOption.logisticsSummary}
+                </p>
+            </div>
+
+             {/* Common Reasoning */}
+             <div className="bg-blue-50 p-6 rounded-xl border border-blue-100">
+                <h3 className="text-sm font-bold text-blue-800 mb-2 uppercase flex items-center gap-2">
+                    <Info className="w-4 h-4" /> Note Generali
+                </h3>
+                <p className="text-sm text-blue-700 leading-relaxed">
+                    {result.commonReasoning}
+                </p>
+            </div>
         </div>
       </div>
-
-      {/* AI Reasoning / Summary */}
-      <div className="bg-slate-800 text-slate-50 p-6 rounded-xl shadow-lg">
-        <h3 className="text-lg font-bold mb-3 flex items-center gap-2">
-            <Info className="w-5 h-5 text-blue-300" /> Note & Reasoning AI
-        </h3>
-        <div className="space-y-4 text-sm leading-relaxed text-slate-300">
-            <p>{result.commonReasoning}</p>
-        </div>
-      </div>
-
     </div>
   );
 };

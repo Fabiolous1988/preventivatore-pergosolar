@@ -67,6 +67,8 @@ export interface TransportOption {
   totalCost: number;
   salesPrice: number;
   marginAmount: number;
+  // New: Specific explanations for each category
+  categoryExplanations?: Record<string, string>; 
 }
 
 export interface EstimateResult {
@@ -100,6 +102,39 @@ export interface AppConfig {
   discountRules: DiscountRule[];
   // Store any other parameters found in the sheet (Key -> {Value, Description})
   customParams: Record<string, { value: number; description?: string }>;
+}
+
+export interface ComputedCosts {
+    distanceKm: number;
+    travelDurationHours: number;
+    
+    // Internal Team Costs
+    internalTravelCost: number; // (Km * rate) + tolls
+    internalTravelTimeCost: number; // Hours * HourlyRate
+    internalHotelCost: number;
+    internalPerDiemCost: number; // Vitto
+    internalLaborCost: number;
+    
+    // External Team Costs
+    externalLaborCost: number; // Rate * Hours (All inclusive)
+    
+    // Logistics
+    forkliftCost: number;
+    materialTransportCost: number;
+    
+    // Totals
+    totalCost: number;
+    salesPrice: number;
+    marginAmount: number;
+    
+    // Meta for AI explanation
+    isWeekendReturnApplied: boolean;
+    activeTechs: number;
+    totalManHours: number;
+    logisticsMethod: string;
+    
+    // Detailed reasoning strings
+    categoryExplanations: Record<string, string>;
 }
 
 // Map Model Name -> { Column Name -> Value }
