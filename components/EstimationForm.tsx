@@ -647,6 +647,7 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
                 </>
             )}
         </button>
+      </div>
     </form>
   );
 };
