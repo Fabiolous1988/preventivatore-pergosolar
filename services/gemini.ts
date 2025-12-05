@@ -1,4 +1,3 @@
-
 import { GoogleGenAI } from "@google/genai";
 import { EstimateInputs, EstimateResult, TransportMode, AppConfig, ComputedCosts } from "../types";
 import { getStoredApiKey } from "./storage";
@@ -13,10 +12,24 @@ const cleanAndParseJSON = (text: string) => {
     const lastBrace = clean.lastIndexOf('}');
     if (firstBrace !== -1 && lastBrace !== -1) {
         clean = clean.substring(firstBrace, lastBrace + 1);
+        return JSON.parse(clean);
     }
-    return JSON.parse(clean);
+    throw new Error("No JSON block found");
   } catch (e) {
-    console.error("JSON Parse Error. Raw text:", text);
+    console.warn("JSON Parse failed, attempting regex fallback. Text snippet:", text.substring(0, 50));
+    
+    // Fallback: Try to find numbers for distance in the text (e.g. "120 km")
+    // Matches "123.45 km" or "123,45 km"
+    const distMatch = text.match(/(\d+(?:[.,]\d+)?)\s*(?:km|chilometri)/i);
+    
+    if (distMatch) {
+        const val = parseFloat(distMatch[1].replace(',', '.'));
+        return {
+            distanceKm: val,
+            duration: "Stima da testo"
+        };
+    }
+    
     throw new Error("Errore nella lettura della risposta AI. Riprova.");
   }
 };
@@ -64,18 +77,22 @@ export const calculateEstimate = async (
   let durationText = "";
   
   try {
-    // We explicitly ask for JSON output to parse distance reliably from Flash
+    // FIXED: Removed responseMimeType: "application/json" because it is not supported with googleMaps tool.
+    // We rely on the prompt to get JSON-like output.
     const mapResponse = await ai.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: `Restituisci ESCLUSIVAMENTE un JSON valido con la distanza stradale e durata tra ${inputs.origin} e ${inputs.destination}. 
-        Formato richiesto: { "distanceKm": numero, "duration": "stringa" }. 
-        Non aggiungere altro testo.`,
+        contents: `Usa Google Maps per calcolare il percorso stradale tra ${inputs.origin} e ${inputs.destination}.
+        Restituisci ESCLUSIVAMENTE un oggetto JSON valido (senza markdown o altro testo) con questo formato: 
+        { "distanceKm": numero, "duration": "stringa" }.
+        Se non riesci a calcolare, restituisci: { "distanceKm": 0, "duration": "N/A" }`,
         config: { 
             tools: [{ googleMaps: {} }],
-            responseMimeType: "application/json"
+            // responseMimeType: "application/json" // REMOVED to avoid 400 INVALID_ARGUMENT error
         }
     });
     
+    // The response text might contain grounding metadata, but we attempt to parse the JSON output
+    // cleanAndParseJSON handles potential markdown wrappers
     const mapData = cleanAndParseJSON(mapResponse.text);
     distanceKm = Number(mapData.distanceKm) || 0;
     durationText = mapData.duration || "";
@@ -83,10 +100,11 @@ export const calculateEstimate = async (
     console.log(`Maps Found: ${distanceKm} km, ${durationText}`);
 
   } catch (err) {
-    console.error("Maps Error:", err);
+    console.warn("Maps Warning (using fallback):", err);
     // Fallback if maps fail: assume 100km just to let the calculator run
+    // This ensures the app doesn't crash completely if the map tool fails or returns non-JSON
     distanceKm = 100;
-    durationText = "1 ora";
+    durationText = "1 ora (Stima Fallback)";
   }
 
   // --- Step 2: Deterministic Calculation (Code) ---

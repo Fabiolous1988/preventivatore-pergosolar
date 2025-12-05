@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { EstimateInputs, ServiceType, TransportMode, ModelsConfig, LogisticsConfig, PergolaModel, DiscountRule } from '../types';
-import { calculateInstallationHours, calculateBallastCount, normalize, getDynamicModelList, getBallastList, explainCalculation } from '../services/calculator';
+import { calculateInstallationHours, calculateBallastCount, calculateTotalWeight, normalize, getDynamicModelList, getBallastList, explainCalculation } from '../services/calculator';
 import { Loader2, MapPin, Calendar, Truck, UserCog, Building2, LayoutGrid, CarFront, ArrowDownCircle, Users, CheckSquare, Weight, BoxSelect, RefreshCw, Calculator, Bug, Eye, Percent, Clock, FileText, HelpCircle, Timer } from 'lucide-react';
 
 interface Props {
@@ -57,8 +57,9 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
   // Reasoning Display
   const [showReasoning, setShowReasoning] = useState(false);
   const [reasoningText, setReasoningText] = useState("");
+  const [calculatedWeight, setCalculatedWeight] = useState(0);
 
-  const [formData, setFormData] = useState<Omit<EstimateInputs, 'origin' | 'destination' | 'excludeOriginTransfer' | 'selectedModelId' | 'parkingSpots' | 'includePV' | 'includeGaskets' | 'includeFabric' | 'includeInsulatedPanels' | 'includeBallast' | 'calculatedHours' | 'useInternalTeam' | 'internalTechs' | 'useExternalTeam' | 'externalTechs' | 'modelsConfig' | 'hasForklift' | 'returnOnWeekends' | 'marginPercent' | 'extraHourlyCost' | 'extraDailyCost' | 'discountPercent'>>({
+  const [formData, setFormData] = useState<Omit<EstimateInputs, 'origin' | 'destination' | 'destinationProvince' | 'excludeOriginTransfer' | 'selectedModelId' | 'parkingSpots' | 'includePV' | 'includeGaskets' | 'includeFabric' | 'includeInsulatedPanels' | 'includeBallast' | 'calculatedHours' | 'useInternalTeam' | 'internalTechs' | 'useExternalTeam' | 'externalTechs' | 'modelsConfig' | 'hasForklift' | 'returnOnWeekends' | 'marginPercent' | 'extraHourlyCost' | 'extraDailyCost' | 'discountPercent'>>({
     serviceType: ServiceType.FULL_INSTALLATION,
     transportMode: TransportMode.COMPANY_VEHICLE,
     startDate: new Date().toISOString().split('T')[0],
@@ -78,7 +79,7 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
 
     // Default Model
     if (list.length > 0 && (!selectedModelId || !list.find(m => m.id === selectedModelId))) {
-        setSelectedModelId(list[0].id);
+        if (list[0]) setSelectedModelId(list[0].id);
     }
     
     // Default Ballast
@@ -143,6 +144,10 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
         modelsConfig
     );
     
+    // Calculate Weight Preview
+    const weights = calculateTotalWeight(selectedModelId, parkingSpots, includeBallast, modelsConfig);
+    setCalculatedWeight(weights.total);
+
     const activeInternal = useInternalTeam ? internalTechs : 0;
     const activeExternal = useExternalTeam ? externalTechs : 0;
     const totalTechs = activeInternal + activeExternal;
@@ -259,6 +264,7 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
       ...formData,
       origin: originStr.trim(),
       destination: destStr.trim(),
+      destinationProvince: destination.province.toUpperCase().trim(),
       excludeOriginTransfer,
       useInternalTeam,
       internalTechs,
@@ -463,10 +469,21 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
                             ))}
                         </select>
                         <p className="text-xs text-slate-400 mt-1 flex items-center gap-1">
-                            <Weight className="w-3 h-3" /> Peso stimato: ~{ballastCount * 1600} kg
+                            <Weight className="w-3 h-3" /> Zavorre stimate: ~{ballastCount * 800} kg
                         </p>
                     </div>
                 )}
+            </div>
+
+            {/* WEIGHT DISPLAY (NEW) */}
+            <div className="md:col-span-2 bg-slate-100 p-2 rounded border border-slate-200 flex items-center justify-between mt-1">
+                <div className="flex items-center gap-2">
+                    <Weight className="w-4 h-4 text-slate-600" />
+                    <span className="text-xs font-bold text-slate-700 uppercase">Peso Totale Stimato:</span>
+                </div>
+                <span className="text-sm font-bold text-slate-900 font-mono">
+                    {calculatedWeight.toLocaleString()} kg
+                </span>
             </div>
 
              <div className="md:col-span-2 p-3 bg-blue-50 border border-blue-100 rounded-lg mt-2">

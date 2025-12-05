@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { EstimateInputs, EstimateResult, AppConfig, ModelsConfig, LogisticsConfig } from './types';
 import { calculateEstimate } from './services/gemini';

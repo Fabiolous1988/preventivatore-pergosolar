@@ -1,4 +1,3 @@
-
 export enum ServiceType {
   FULL_INSTALLATION = 'Installazione Completa',
   SUPPORT = 'Supporto all\'Installazione', // Simplified generic support type
@@ -12,6 +11,7 @@ export enum TransportMode {
 export interface EstimateInputs {
   origin: string;
   destination: string;
+  destinationProvince?: string; // NEW: Explicit province code (e.g., 'VR', 'MI')
   excludeOriginTransfer: boolean;
   serviceType: ServiceType;
   transportMode: TransportMode;

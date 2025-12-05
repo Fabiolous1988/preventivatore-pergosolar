@@ -1,11 +1,9 @@
-
 import { PergolaModel, ModelsConfig } from "../types";
 
 // Base metadata for known models to keep UI nice (categories, lifting rules)
 const STATIC_METADATA: Record<string, Partial<PergolaModel>> = {
     'solarflex': { category: 'Solarflex' },
     'centauro': { category: 'Corporate' },
-    // Add generic category matching here if needed
 };
 
 // HELPER: Normalize string for comparison (remove ALL spaces, symbols, lowercase)
@@ -127,6 +125,43 @@ export const calculateInstallationHours = (
     return Math.round(total * 100) / 100;
 };
 
+// --- NEW: WEIGHT CALCULATION ---
+export const calculateTotalWeight = (
+    modelId: string,
+    spots: number,
+    includeBallast: boolean,
+    modelsConfig: ModelsConfig | null
+): { total: number, structure: number, ballast: number } => {
+    const result = { total: 0, structure: 0, ballast: 0 };
+    
+    if (spots <= 0) return result;
+
+    // 1. Structure Weight
+    // Use heuristic (200kg/spot) OR try to find column in CSV
+    let structureUnitWeight = 200; 
+    
+    if (modelsConfig && modelId) {
+        const match = findModelRow(modelId, modelsConfig);
+        if (match) {
+            // Check if there is a weight column (PESO_STRUTTURA_1PA or similar)
+            // This allows future CSV updates to drive weight
+            const csvWeight = getVal(match.row, ['PESO_STRUTTURA_1PA', 'PESO_1PA', 'KG_1PA']);
+            if (csvWeight > 0) structureUnitWeight = csvWeight;
+        }
+    }
+    result.structure = spots * structureUnitWeight;
+
+    // 2. Ballast Weight
+    if (includeBallast) {
+        const numBallasts = calculateBallastCount(spots); 
+        // Heuristic: 800kg per block (1600kg per pair)
+        result.ballast = numBallasts * 800; 
+    }
+
+    result.total = result.structure + result.ballast;
+    return result;
+};
+
 // Generates a human-readable explanation of the calculation
 export const explainCalculation = (
     modelId: string, 
@@ -201,6 +236,11 @@ export const explainCalculation = (
     
     explanation += `\n---------------------------------\n`;
     explanation += `TOTALE ORE LAVORO (Man-Hours): ${totalHours.toFixed(2)} ore\n`;
+    
+    // Weight Preview
+    const weights = calculateTotalWeight(modelId, spots, includeBallast, modelsConfig);
+    explanation += `\nSTIMA PESO TOTALE: ~${weights.total.toLocaleString()} kg\n`;
+    explanation += `(Struttura: ${weights.structure}kg + Zavorre: ${weights.ballast}kg)\n`;
     
     if (totalTechs > 0) {
         const hoursPerDay = totalTechs * 8;

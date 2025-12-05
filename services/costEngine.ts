@@ -1,4 +1,6 @@
+
 import { EstimateInputs, AppConfig, ModelsConfig, LogisticsConfig, TransportMode, ComputedCosts } from "../types";
+import { calculateTotalWeight } from "./calculator";
 
 // Helper to check if a date range includes a weekend (Saturday or Sunday)
 const hasWeekendOverlap = (startDate: string, durationDays: number): boolean => {
@@ -23,6 +25,7 @@ const findCostInTable = (costs: Record<string, number>, keywords: string[]): { n
     const availableKeys = Object.keys(costs);
     
     for (const kw of keywords) {
+        // Strict inclusion check (case insensitive)
         const match = availableKeys.find(k => k.toUpperCase().includes(kw));
         if (match && costs[match] > 0) {
             return { name: match, cost: costs[match] };
@@ -89,7 +92,6 @@ export const calculateDeterministicCosts = (
         // Hotel
         let nights = Math.max(0, Math.ceil(days) - 1);
         if (inputs.returnOnWeekends && hasWeekendOverlap(inputs.startDate, days)) {
-            // Assume returning home saves 2 hotel nights but costs travel
             nights = Math.max(0, nights - 2); 
             isWeekendReturnApplied = true;
             livingLog += `• Hotel: Notti ridotte per rientro weekend.\n`;
@@ -128,7 +130,7 @@ export const calculateDeterministicCosts = (
         laborLog += `• Esterni: ${externalLaborHours.toFixed(1)}h * €${config.externalHourlyRate} = €${externalLaborCost.toFixed(2)}.\n`;
     }
 
-    // --- 5. LOGISTICS & HEAVY TRANSPORT (THE CRITICAL PART) ---
+    // --- 5. LOGISTICS & HEAVY TRANSPORT (STRICT RULES) ---
     let forkliftCost = 0;
     let materialTransportCost = 0;
     let logisticsMethod = "Furgone Aziendale (Materiale Leggero)";
@@ -139,66 +141,81 @@ export const calculateDeterministicCosts = (
         logisticsLog += `• Noleggio Muletto: €${forkliftCost.toFixed(2)}.\n`;
     }
 
-    // --- WEIGHT CALCULATION ---
+    // --- WEIGHT CALCULATION (SYNCED WITH FRONTEND) ---
     const spots = inputs.parkingSpots || 0;
-    const ballastWeight = inputs.includeBallast ? (spots * 1600) : 0; 
-    const structureWeight = spots * 200; // Est. 200kg/spot
-    const totalWeightKg = ballastWeight + structureWeight;
+    const weights = calculateTotalWeight(inputs.selectedModelId || '', spots, inputs.includeBallast || false, inputs.modelsConfig || null);
+    const totalWeightKg = weights.total;
 
-    logisticsLog += `• Peso Totale: ${totalWeightKg.toLocaleString()} kg (Struttura: ${structureWeight}, Zavorre: ${ballastWeight}).\n`;
+    logisticsLog += `• Peso Totale Calcolato: ${totalWeightKg.toLocaleString()} kg (Struttura: ${weights.structure}kg, Zavorre: ${weights.ballast}kg).\n`;
 
-    // --- PROVINCE LOOKUP ---
-    // Try to extract province (XX) from destination string
-    // Regex looks for 2 uppercase letters bounded by word boundaries
-    const provMatch = inputs.destination.match(/\b([A-Za-z]{2})\b/); 
-    const destProv = provMatch ? provMatch[1].toUpperCase() : "??";
-    
-    logisticsLog += `• Provincia Destinazione rilevata: "${destProv}".\n`;
+    // --- PROVINCE LOOKUP (DIRECT) ---
+    const destProv = inputs.destinationProvince ? inputs.destinationProvince.toUpperCase().trim() : "??";
+    logisticsLog += `• Provincia Destinazione: "${destProv}".\n`;
 
     let tableCosts = null;
+    let availableProvinceKeys: string[] = [];
+    
     if (inputs.logisticsConfig && destProv !== "??") {
-        // Find province key handling whitespace
         const provKey = Object.keys(inputs.logisticsConfig).find(k => k.trim().toUpperCase() === destProv);
         if (provKey) {
             tableCosts = inputs.logisticsConfig[provKey];
+            availableProvinceKeys = Object.keys(tableCosts);
         } else {
-            logisticsLog += `! ATTENZIONE: Provincia ${destProv} non trovata nel CSV Logistica.\n`;
+            logisticsLog += `! ATTENZIONE: Provincia "${destProv}" non trovata nel CSV Logistica.\n`;
         }
     }
 
-    // --- VEHICLE SELECTION LOGIC ---
-    if (totalWeightKg > 1500) {
-        // Needs heavy transport
-        let vehicleType = "";
-        let foundOption = null;
-
-        if (totalWeightKg > 22000) {
-            // > 22 tons -> BILICO
-            vehicleType = "BILICO";
-            if (tableCosts) foundOption = findCostInTable(tableCosts, ['BILICO', 'AUTOARTICOLATO']);
-        } else if (totalWeightKg > 6000) {
-            // > 6 tons -> MOTRICE / CAMION GRU
-            vehicleType = "MOTRICE/GRU";
-            if (tableCosts) foundOption = findCostInTable(tableCosts, ['MOTRICE', 'GRU', 'CAMION']);
+    // --- VEHICLE SELECTION LOGIC (STRICT) ---
+    if (totalWeightKg < 1000) {
+        logisticsMethod = "Furgone Aziendale (Nessun costo extra)";
+        logisticsLog += `• Peso < 1000kg: Trasporto con furgone aziendale incluso.\n`;
+        materialTransportCost = 0;
+    } 
+    else if (totalWeightKg <= 16000) {
+        // CAMION CON GRU (1t - 16t)
+        const found = findCostInTable(tableCosts, ['GRU', 'CAMION', 'MOTRICE']);
+        if (found) {
+            materialTransportCost = found.cost;
+            logisticsMethod = `Camion con Gru (${found.name})`;
+            logisticsLog += `• Peso 1.000-16.000kg: Selezionato Camion con Gru. Costo Tabella per ${destProv}: €${materialTransportCost}.\n`;
         } else {
-            // > 1.5 tons -> Small Truck
-            vehicleType = "MOTRICE/CAMIONCINO";
-            if (tableCosts) foundOption = findCostInTable(tableCosts, ['MOTRICE', 'CAMION', 'CORRIERE']);
+            // Fallback
+            materialTransportCost = Math.max(300, distanceKm * 1.8);
+            logisticsMethod = "Camion con Gru (Stima)";
+            logisticsLog += `! Tariffa Camion Gru non trovata per ${destProv}. Stima: €${materialTransportCost.toFixed(2)}.\n`;
+            if (tableCosts) logisticsLog += `  (Colonne disponibili: ${availableProvinceKeys.join(', ')})\n`;
         }
-
-        if (foundOption) {
-            materialTransportCost = foundOption.cost;
-            logisticsMethod = `Mezzo Pesante: ${foundOption.name} (Tabella)`;
-            logisticsLog += `• Mezzo Selezionato: ${foundOption.name} (Costo Tabella: €${materialTransportCost}).\n`;
+    } 
+    else if (totalWeightKg <= 24000) {
+        // BILICO (16t - 24t)
+        const found = findCostInTable(tableCosts, ['BILICO', 'AUTOARTICOLATO']);
+        if (found) {
+            materialTransportCost = found.cost;
+            logisticsMethod = `Bilico (${found.name})`;
+            logisticsLog += `• Peso 16.000-24.000kg: Selezionato Bilico. Costo Tabella per ${destProv}: €${materialTransportCost}.\n`;
         } else {
-            // Fallback estimation if table lookup failed
-            const rate = totalWeightKg > 22000 ? 2.5 : 1.6;
-            materialTransportCost = Math.max(350, (distanceKm * rate) + 200);
-            logisticsMethod = `${vehicleType} (Stima Km)`;
-            logisticsLog += `! Costo tabella non trovato per ${vehicleType} a ${destProv}. Usata stima su km: €${materialTransportCost.toFixed(2)}.\n`;
+            materialTransportCost = Math.max(500, distanceKm * 2.5);
+            logisticsMethod = "Bilico (Stima)";
+            logisticsLog += `! Tariffa Bilico non trovata per ${destProv}. Stima: €${materialTransportCost.toFixed(2)}.\n`;
+            if (tableCosts) logisticsLog += `  (Colonne disponibili: ${availableProvinceKeys.join(', ')})\n`;
         }
-    } else {
-        logisticsLog += `• Peso < 1500kg: Materiale trasportato con furgoni tecnici o corriere espresso (incluso/marginale).\n`;
+    } 
+    else {
+        // > 24000kg -> Need Multiple Vehicles (Bilici)
+        const numBilici = Math.ceil(totalWeightKg / 24000);
+        const found = findCostInTable(tableCosts, ['BILICO', 'AUTOARTICOLATO']);
+        
+        if (found) {
+            materialTransportCost = found.cost * numBilici;
+            logisticsMethod = `${numBilici}x Bilici (${found.name})`;
+            logisticsLog += `• Peso > 24.000kg (${totalWeightKg}kg): Necessari ${numBilici} Bilici. Costo Totale: €${materialTransportCost} (€${found.cost} cad).\n`;
+        } else {
+            const singleBilicoEst = Math.max(500, distanceKm * 2.5);
+            materialTransportCost = singleBilicoEst * numBilici;
+            logisticsMethod = `${numBilici}x Bilici (Stima)`;
+            logisticsLog += `! Tariffa Bilico non trovata. Stima per ${numBilici} viaggi: €${materialTransportCost.toFixed(2)}.\n`;
+            if (tableCosts) logisticsLog += `  (Colonne disponibili: ${availableProvinceKeys.join(', ')})\n`;
+        }
     }
 
     // --- 6. TOTALS ---
