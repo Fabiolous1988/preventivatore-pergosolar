@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { EstimateInputs, ServiceType, TransportMode, ModelsConfig, LogisticsConfig, PergolaModel, DiscountRule } from '../types';
 import { calculateInstallationHours, calculateBallastCount, normalize, getDynamicModelList, getBallastList, explainCalculation } from '../services/calculator';

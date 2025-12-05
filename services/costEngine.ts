@@ -1,4 +1,3 @@
-
 import { EstimateInputs, AppConfig, ModelsConfig, LogisticsConfig, TransportMode, ComputedCosts } from "../types";
 
 // Helper to check if a date range includes a weekend (Saturday or Sunday)
@@ -18,6 +17,14 @@ const hasWeekendOverlap = (startDate: string, durationDays: number): boolean => 
         curr.setDate(curr.getDate() + 1);
     }
     return false;
+};
+
+// Helper to normalize keys for lookup (handle casing/spaces)
+const findKeyIncludes = (obj: Record<string, number>, search: string): number | null => {
+    if (!obj) return null;
+    const keys = Object.keys(obj);
+    const found = keys.find(k => k.toUpperCase().includes(search.toUpperCase()));
+    return found ? obj[found] : null;
 };
 
 export const calculateDeterministicCosts = (
@@ -174,32 +181,67 @@ export const calculateDeterministicCosts = (
         logisticsLog += `• Noleggio Muletto: €${forkliftCost.toFixed(2)} (Base €700${extraText}).\n`;
     }
 
-    const ballastWeight = inputs.includeBallast ? (inputs.parkingSpots || 0) * 1600 : 0; 
+    // --- WEIGHT & TRANSPORT LOGIC ---
+    // Calculate total weight to decide vehicle
+    const spots = inputs.parkingSpots || 0;
     
-    // Check Logistics Config
+    // Weight Estimation
+    const ballastWeight = inputs.includeBallast ? (spots * 1600) : 0; 
+    const structureWeight = spots * 200; // Approx 200kg per spot for steel structure
+    const totalWeightKg = ballastWeight + structureWeight;
+
+    logisticsLog += `• Peso Stimato Cantiere: ${totalWeightKg.toLocaleString()} kg (Zavorre: ${ballastWeight}, Struttura: ${structureWeight}).\n`;
+
+    // Extract Province Code
     const provMatch = inputs.destination.match(/\b([A-Z]{2})\b/);
     const destProv = provMatch ? provMatch[1] : null;
 
+    let selectedVehicle = "";
+    let costFound = 0;
+
     if (destProv && inputs.logisticsConfig && inputs.logisticsConfig[destProv]) {
         const provCosts = inputs.logisticsConfig[destProv];
-        if (ballastWeight > 2000) {
-            const costKeys = Object.keys(provCosts);
-            const heavyKey = costKeys.find(k => k.includes('BILICO') || k.includes('GRU') || k.includes('CAMION'));
-            if (heavyKey) {
-                materialTransportCost = provCosts[heavyKey];
-                logisticsMethod = heavyKey;
-                logisticsLog += `• Trasporto Materiale (Tabella ${destProv}): €${materialTransportCost.toFixed(2)} [${logisticsMethod}].\n`;
+        
+        // --- LOGIC HIERARCHY ---
+        if (totalWeightKg > 22000) {
+            // Need BILICO
+            costFound = findKeyIncludes(provCosts, 'BILICO') || 0;
+            if (costFound > 0) selectedVehicle = "BILICO (da tabella)";
+        } 
+        else if (totalWeightKg > 8000) {
+             // Need MOTRICE or CAMION GRU
+             costFound = findKeyIncludes(provCosts, 'MOTRICE') || findKeyIncludes(provCosts, 'CAMION') || findKeyIncludes(provCosts, 'GRU') || 0;
+             if (costFound > 0) selectedVehicle = "MOTRICE/CAMION (da tabella)";
+        }
+        else if (totalWeightKg > 1500) {
+            // Need smaller dedicated truck
+            costFound = findKeyIncludes(provCosts, 'MOTRICE') || findKeyIncludes(provCosts, 'GRU') || 0;
+            if (costFound > 0) {
+                selectedVehicle = "MOTRICE (da tabella)";
+            } else {
+                // If no light truck price in table, fallback to km calculation
+                costFound = 0; // Trigger fallback below
             }
         }
-    } else {
-        if (ballastWeight > 1200) {
-            materialTransportCost = distanceKm * 1.5;
-            if (materialTransportCost < 300) materialTransportCost = 300; 
-            logisticsMethod = "Trasporto Dedicato (Stima)";
-            logisticsLog += `• Trasporto Dedicato (Peso > 1200kg): €${materialTransportCost.toFixed(2)} (stimato su km).\n`;
-        } else {
-            logisticsLog += `• Trasporto Materiale: Incluso nei mezzi aziendali (Peso contenuto).\n`;
+        
+        // If we found a cost in the table
+        if (costFound > 0) {
+            materialTransportCost = costFound;
+            logisticsMethod = selectedVehicle;
+            logisticsLog += `• Trasporto Materiale (${destProv}): €${materialTransportCost.toFixed(2)} [${selectedVehicle}].\n`;
         }
+    }
+
+    // Fallback Logic if no table price found OR weight logic didn't match table
+    if (materialTransportCost === 0 && totalWeightKg > 1500) {
+        // Heavy but no table price -> Estimate
+        // Heuristic: €1.60/km for dedicated truck + fixed base
+        const estimatedTruck = (distanceKm * 1.6) + 150; 
+        materialTransportCost = Math.max(300, estimatedTruck); // Min charge €300
+        logisticsMethod = "Trasporto Dedicato (Stima)";
+        logisticsLog += `• Trasporto Dedicato (Peso > 1.5t, tariffa non in tabella): €${materialTransportCost.toFixed(2)} (stimato su km).\n`;
+    } else if (materialTransportCost === 0) {
+        logisticsLog += `• Trasporto Materiale: Incluso nei mezzi aziendali (Peso < 1.5t).\n`;
     }
     
     // --- 7. TOTALS & MARGIN ---
