@@ -234,8 +234,11 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
   };
 
   const handleAddressChange = (type: 'origin' | 'destination', field: keyof AddressState, value: string) => {
-    if (type === 'origin') setOrigin(prev => ({ ...prev, [field]: value }));
-    else setDestination(prev => ({ ...prev, [field]: value }));
+    // For province, force UPPERCASE
+    const cleanValue = field === 'province' ? value.toUpperCase() : value;
+    
+    if (type === 'origin') setOrigin(prev => ({ ...prev, [field]: cleanValue }));
+    else setDestination(prev => ({ ...prev, [field]: cleanValue }));
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
@@ -323,7 +326,7 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
                 <div className="grid grid-cols-6 gap-3">
                      <input type="text" placeholder="CAP" value={destination.zip} onChange={(e) => handleAddressChange('destination', 'zip', e.target.value)} className="col-span-2 p-2.5 border border-slate-300 rounded-lg text-sm" required />
                      <input type="text" placeholder="Città" value={destination.city} onChange={(e) => handleAddressChange('destination', 'city', e.target.value)} className="col-span-3 p-2.5 border border-slate-300 rounded-lg text-sm" required />
-                     <input type="text" placeholder="Prov" value={destination.province} onChange={(e) => handleAddressChange('destination', 'province', e.target.value)} className="col-span-1 p-2.5 border border-slate-300 rounded-lg text-sm uppercase" maxLength={2} required />
+                     <input type="text" placeholder="Prov" value={destination.province} onChange={(e) => handleAddressChange('destination', 'province', e.target.value)} className="col-span-1 p-2.5 border border-slate-300 rounded-lg text-sm uppercase bg-yellow-50" maxLength={2} required />
                 </div>
                  
                  <div className="flex items-center justify-between p-3 bg-slate-100 rounded-lg border border-slate-200 mt-2">
