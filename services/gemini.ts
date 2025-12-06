@@ -1,4 +1,3 @@
-
 import { GoogleGenAI } from "@google/genai";
 import { EstimateInputs, EstimateResult, TransportMode, AppConfig, ComputedCosts } from "../types";
 import { getStoredApiKey } from "./storage";
@@ -67,19 +66,20 @@ export const calculateEstimate = async (
   let durationText = "";
   
   try {
-    // REVISED: Use Natural Language Prompt instead of enforcing JSON.
-    // Tools work best when the model can output natural text describing the tool result.
+    // REVISED PROMPT: Force explicit numeric output to avoid parsing errors
     const mapResponse = await ai.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: `Calcola il percorso stradale tra ${inputs.origin} e ${inputs.destination}.
+        contents: `Calcola il percorso stradale reale tra "${inputs.origin}" e "${inputs.destination}".
+        Usa lo strumento Google Maps.
         
-        Rispondi ESATTAMENTE con questo formato:
-        DISTANZA: [numero] km
-        DURATA: [tempo]
+        Dopo aver trovato il percorso, estrai i dati e rispondi ESATTAMENTE con questo formato (senza testo introduttivo):
+        
+        DISTANZA_KM: [numero puro con punto decimale]
+        DURATA_TESTO: [testo durata]
         
         Esempio:
-        DISTANZA: 120,5 km
-        DURATA: 1 ora 15 min`,
+        DISTANZA_KM: 120.5
+        DURATA_TESTO: 1 ora e 15 min`,
         config: { 
             tools: [{ googleMaps: {} }],
         }
@@ -88,53 +88,56 @@ export const calculateEstimate = async (
     const text = mapResponse.text || "";
     console.log("Maps Raw Response:", text);
 
-    // ROBUST REGEX PARSING
-    // Match "DISTANZA: 1.200,5 km" or just "1.200,5 km"
-    const distMatch = text.match(/DISTANZA:\s*([\d\.,]+)\s*(?:km|chilometri)/i) || 
-                      text.match(/([\d\.,]+)\s*(?:km|chilometri)/i);
-
+    // Strict Parsing
+    const distMatch = text.match(/DISTANZA_KM:\s*([\d\.]+)/i);
     if (distMatch) {
-        let numStr = distMatch[1];
-        // Normalization for Italian/European number format common in Maps output
-        // Remove dots (thousands separators)
-        // Replace comma with dot (decimal)
-        // Example: "1.200,50" -> "1200.50"
-        // Example: "120" -> "120"
-        
-        // Simple heuristic: if string has '.' AND ',', assume '.' is thousand separator
-        // If string has only '.', assume it is thousand separator if followed by 3 digits (Maps style) or just handle as Italian format preference.
-        // SAFEST: Remove all dots, replace comma with dot.
-        numStr = numStr.replace(/\./g, '').replace(',', '.');
-        
-        distanceKm = parseFloat(numStr);
+        distanceKm = parseFloat(distMatch[1]);
+    } else {
+        // Fallback: try finding typical distance patterns if strict format failed
+        const looseMatch = text.match(/([\d\.,]+)\s*(?:km|chilometri)/i);
+        if (looseMatch) {
+            let numStr = looseMatch[1];
+            // Normalize European format (1.200,50) to JS (1200.50)
+            if (numStr.includes('.') && numStr.includes(',')) {
+                 numStr = numStr.replace(/\./g, '').replace(',', '.');
+            } else if (numStr.includes(',')) {
+                 numStr = numStr.replace(',', '.');
+            }
+            // If only dots, assume they are thousands separators if value > 1000 logic fits, OR user is passing English format.
+            // But standardizing on comma for decimal in IT context suggests '.' is thousands.
+            // However, 10.5 km is 10.5. 
+            // We'll trust parseFloat for simple dot cases unless it looks huge.
+            distanceKm = parseFloat(numStr);
+        }
     }
 
     // Match Duration
-    const durMatch = text.match(/DURATA:\s*(.+)/i) || 
+    const durMatch = text.match(/DURATA_TESTO:\s*(.+)/i) || 
+                     text.match(/DURATA:\s*(.+)/i) ||
                      text.match(/((?:\d+\s*(?:ore|ora|h))?\s*(?:\d+\s*(?:min|minuti))?)/i);
 
     if (durMatch && durMatch[1].trim().length > 0) {
         durationText = durMatch[1].trim();
     } else {
-        // Fallback duration calculation
-        if (distanceKm > 0) {
-            durationText = `${(distanceKm / 80).toFixed(1)} ore (Stima)`;
-        } else {
-            durationText = "N/A";
-        }
+        if (distanceKm > 0) durationText = `${(distanceKm / 80).toFixed(1)} h (Stima)`;
+        else durationText = "N/A";
     }
 
-    if (isNaN(distanceKm) || distanceKm === 0) {
-        throw new Error("Distanza non trovata o pari a 0");
+    if (isNaN(distanceKm) || distanceKm <= 0.1) {
+        // Only throw if we truly failed. If map returns 0, maybe same city?
+        // Let's assume same city = 10km for logistics
+        console.warn("Distanza 0 o non trovata. Uso fallback locale.");
+        distanceKm = 10; 
+        durationText = "20 min (Stima locale)";
     }
     
-    console.log(`Maps Found: ${distanceKm} km, ${durationText}`);
+    console.log(`Maps Final: ${distanceKm} km, ${durationText}`);
 
   } catch (err) {
-    console.warn("Maps Warning (using fallback):", err);
-    // Fallback if maps fail: assume 100km just to let the calculator run
-    distanceKm = 100;
-    durationText = "1 ora (Stima Fallback)";
+    console.warn("Maps Error (using fallback):", err);
+    // Fallback if maps fail completely
+    distanceKm = 50;
+    durationText = "45 min (Stima Fallback)";
   }
 
   // --- Step 2: Deterministic Calculation (Code) ---

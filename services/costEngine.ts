@@ -154,7 +154,7 @@ export const calculateDeterministicCosts = (
 
             const totalKm = distanceKm * 2 * numberOfRoundTrips;
             internalTravelCost = totalKm * fuelTollRate;
-            travelLog += `• Mezzi Aziendali: ${totalKm.toFixed(0)} km totali * €${fuelTollRate}/km = €${internalTravelCost.toFixed(2)}.\n`;
+            travelLog += `• Mezzi Aziendali (Tecnici): ${totalKm.toFixed(0)} km totali * €${fuelTollRate}/km = €${internalTravelCost.toFixed(2)}.\n`;
 
             // Travel Time Cost for Techs (Hourly rate while driving)
             const totalTravelHours = travelTimeOneWay * 2 * numberOfRoundTrips * internalTechs;
@@ -179,34 +179,6 @@ export const calculateDeterministicCosts = (
     let forkliftCost = 0;
     let logisticsMethod = "Nessuno";
 
-    // Debugging Logistics Config
-    if (!inputs.logisticsConfig) {
-        debugBuffer += "ERRORE: logisticsConfig non caricato.\n";
-    } else {
-        debugBuffer += "LogisticsConfig presente.\n";
-    }
-
-    // Determine Province Cost Row
-    let provinceCosts: Record<string, number> | undefined;
-    if (inputs.logisticsConfig && inputs.destinationProvince) {
-        // Try strict
-        provinceCosts = inputs.logisticsConfig[inputs.destinationProvince];
-        debugBuffer += `Ricerca Provincia '${inputs.destinationProvince}': ${provinceCosts ? 'TROVATA' : 'NON TROVATA'}.\n`;
-        
-        if (provinceCosts) {
-            debugBuffer += `Colonne disponibili per ${inputs.destinationProvince}: ${Object.keys(provinceCosts).join(", ")}\n`;
-        } else {
-            // Fallback try find similar
-            const allProvs = Object.keys(inputs.logisticsConfig);
-            debugBuffer += `Province disponibili (prime 10): ${allProvs.slice(0, 10).join(", ")}...\n`;
-            // Check if user is searching for SIG (VR) but only Full names exist?
-            const maybeFull = allProvs.find(p => p.includes(inputs.destinationProvince!));
-            if (maybeFull) {
-                 debugBuffer += `SUGGERIMENTO: Trovata chiave simile '${maybeFull}'. Il CSV usa nomi estesi invece di SIG?\n`;
-            }
-        }
-    }
-
     // Weight Calculation
     const weightData = calculateTotalWeight(
         inputs.selectedModelId || '', 
@@ -215,26 +187,40 @@ export const calculateDeterministicCosts = (
         inputs.modelsConfig || null
     );
     const totalWeightKg = weightData.total;
-    logisticsLog += `• Peso Totale Stimato: ${totalWeightKg.toLocaleString()} kg (Struttura: ${weightData.structure} + Zavorre: ${weightData.ballast}).\n`;
+    debugBuffer += `Peso Calcolato: ${totalWeightKg} kg (Strut: ${weightData.structure}, Zav: ${weightData.ballast})\n`;
+    logisticsLog += `• Peso Totale Materiale: ${totalWeightKg.toLocaleString()} kg.\n`;
 
-    // Logic for Vehicle Selection
-    let vehicleType = "FURGONE"; 
-    // Thresholds
-    if (totalWeightKg > 16000) {
-        vehicleType = "BILICO";
-    } else if (totalWeightKg > 1500) {
-        // Heavy but not full truck load
-        if (inputs.hasForklift) {
-            vehicleType = "MOTRICE"; // Standard truck, customer unloads
-        } else {
-            vehicleType = "GRU"; // Truck with crane needed
-        }
+    // Determine Province Cost Row
+    let provinceCosts: Record<string, number> | undefined;
+    if (inputs.logisticsConfig && inputs.destinationProvince) {
+        provinceCosts = inputs.logisticsConfig[inputs.destinationProvince];
     }
 
-    logisticsLog += `• Veicolo Selezionato: ${vehicleType} (in base a peso e muletto).\n`;
+    // --- VEHICLE SELECTION LOGIC ---
+    // 1. BILICO: Heavy weight (> 13500kg approx for safety) OR many spots
+    // 2. CAMION GRU: > 1000kg (too heavy for van)
+    // 3. FURGONE: Light weight (Techs carry it)
 
-    // Lookup Cost
-    if (provinceCosts) {
+    let vehicleType = "FURGONE"; 
+    
+    if (totalWeightKg > 13500) {
+        vehicleType = "BILICO";
+    } else if (totalWeightKg > 1000 || inputs.includeBallast) {
+        // Even if weight is low, ballasts usually require a truck/crane if not huge
+        vehicleType = "GRU";
+    } else {
+        vehicleType = "FURGONE";
+    }
+    
+    logisticsLog += `• Mezzo Richiesto: ${vehicleType} (basato su peso/tipologia).\n`;
+    debugBuffer += `Veicolo Selezionato: ${vehicleType}\n`;
+
+    // --- COST LOOKUP ---
+    if (vehicleType === "FURGONE") {
+        materialTransportCost = 0;
+        logisticsMethod = "Furgone Aziendale (Incluso)";
+        logisticsLog += `• Materiale caricato su furgone tecnici (Costo incluso nel viaggio personale).\n`;
+    } else if (provinceCosts) {
         let match: { name: string, cost: number } | null = null;
         let searchKeywords: string[] = [];
 
@@ -244,50 +230,49 @@ export const calculateDeterministicCosts = (
         } else if (vehicleType === "GRU") {
             searchKeywords = GRU_KEYWORDS;
             match = findCostInTable(provinceCosts, searchKeywords);
-        } else if (vehicleType === "MOTRICE") {
-            searchKeywords = MOTRICE_KEYWORDS;
-            match = findCostInTable(provinceCosts, searchKeywords);
-            // Fallback: if motrice not found, check GRU cost as it covers it
-            if (!match) match = findCostInTable(provinceCosts, GRU_KEYWORDS);
+            // Fallback to Motrice if GRU specific not found but Motrice is
+            if (!match) match = findCostInTable(provinceCosts, MOTRICE_KEYWORDS);
         }
-
-        debugBuffer += `Ricerca Veicolo '${vehicleType}' con keywords: [${searchKeywords.join(", ")}]\n`;
 
         if (match) {
             materialTransportCost = match.cost;
-            logisticsMethod = `${match.name} (Tabella)`;
-            logisticsLog += `• Trovato costo in tabella: €${match.cost} (Colonna: ${match.name}).\n`;
-            debugBuffer += `MATCH TROVATO: Colonna="${match.name}" Valore=${match.cost}\n`;
+            logisticsMethod = `${vehicleType} (Da Tabella)`;
+            logisticsLog += `• Costo Trasporto Tabellare: €${match.cost.toFixed(2)} (Colonna: ${match.name}).\n`;
+            
+            if (vehicleType === "GRU") {
+                logisticsLog += `• (Nota: Questo costo include anche vitto/alloggio autista).\n`;
+            }
+            
+            debugBuffer += `MATCH TABELLA: €${match.cost}\n`;
         } else {
-            debugBuffer += `NESSUN MATCH trovate nelle colonne. Fallback su stima.\n`;
-            logisticsLog += `• DATO MANCANTE NEL CSV: Nessuna colonna corrisponde alle keywords per ${vehicleType}.\n`;
+            // Fallback only if table lookup fails for heavy vehicles
+            debugBuffer += `MISSING IN TABLE for ${vehicleType}. Fallback Estimate.\n`;
+            const ratePerKm = vehicleType === 'BILICO' ? 2.5 : 1.8;
+            materialTransportCost = distanceKm * 2 * ratePerKm;
+            logisticsMethod = `${vehicleType} (STIMA - Dato mancante)`;
+            logisticsLog += `• ! DATO MANCANTE IN TABELLA ! Stima chilometrica: €${materialTransportCost.toFixed(2)}.\n`;
         }
     } else {
-         logisticsLog += `• Provincia non trovata nel file Logistica. Uso stima km.\n`;
+         logisticsLog += `• Provincia non trovata per Logistica. Uso stima.\n`;
+         // Fallback logic for unknown province
+         const ratePerKm = vehicleType === 'BILICO' ? 2.5 : 1.5;
+         materialTransportCost = distanceKm * 2 * ratePerKm;
+         logisticsMethod = `${vehicleType} (STIMA)`;
     }
 
-    // Fallback Estimate if CSV lookup failed
-    if (materialTransportCost === 0 && !inputs.excludeOriginTransfer) {
-        const ratePerKm = vehicleType === 'BILICO' ? 2.5 : vehicleType === 'GRU' ? 1.8 : 1.2;
-        materialTransportCost = distanceKm * 2 * ratePerKm;
-        logisticsMethod = `${vehicleType} (STIMA - Dato mancante in CSV)`;
-        logisticsLog += `• Costo stimato: ${distanceKm}km * 2 * €${ratePerKm}/km = €${materialTransportCost.toFixed(2)}.\n`;
-    }
-
-    // Forklift Rental (if needed and not provided)
-    // If vehicle is GRU, we assume unloading is included in transport cost (usually)
-    // If vehicle is MOTRICE or BILICO and NO forklift at site, we might need to rent one locally.
+    // Forklift Logic
+    // If we use BILICO or MOTRICE (without Crane) and customer has NO forklift, we rent one.
+    // If we use GRU, the crane does the job.
     if (!inputs.hasForklift && vehicleType !== "GRU" && vehicleType !== "FURGONE") {
-        forkliftCost = 350 * days; // Estimate rental
-        logisticsLog += `• Noleggio Muletto/Sollevatore: €350 * ${days}gg = €${forkliftCost} (Cliente sprovvisto).\n`;
+        forkliftCost = 350 * days; 
+        logisticsLog += `• Noleggio Muletto in loco: €${forkliftCost} (Cliente sprovvisto).\n`;
     }
 
     if (inputs.excludeOriginTransfer) {
-        // If explicitly excluded, we zero out the material transport
         if (materialTransportCost > 0) {
-            logisticsLog += `• (Nota: Trasporto materiale calcolato in €${materialTransportCost} ma ESCLUSO da opzione utente).\n`;
+            logisticsLog += `• (Trasporto materiale €${materialTransportCost} stornato su richiesta utente).\n`;
             materialTransportCost = 0;
-            logisticsMethod = "Escluso (Ritiro Cliente)";
+            logisticsMethod = "Ritiro Cliente (Ex Works)";
         }
     }
 
@@ -305,7 +290,6 @@ export const calculateDeterministicCosts = (
         forkliftCost;
 
     // Sales Price Calculation (Cost / (1 - Margin%))
-    // Margin is percentage of SALES PRICE, not markup on cost
     const marginDec = (inputs.marginPercent || 30) / 100;
     let salesPrice = totalCost;
     if (marginDec < 1) {

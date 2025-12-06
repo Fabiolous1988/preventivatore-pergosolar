@@ -145,22 +145,22 @@ export const calculateTotalWeight = (
         if (match) {
             const keys = Object.keys(match.row);
             
-            // Search strategy for Weight Key
-            // Priority 1: Contains 'PESO' and '1PA' (or '1_PA', '1_POSTO')
-            let weightKey = keys.find(k => 
-                (k.includes('PESO') || k.includes('KG')) && 
-                (k.includes('1PA') || k.includes('1_PA') || k.includes('1_POSTO'))
-            );
-            
-            // Priority 2: Contains 'PESO' and 'STRUTTURA'
-            if (!weightKey) {
-                weightKey = keys.find(k => k.includes('PESO') && k.includes('STRUTTURA'));
-            }
+            // AGGRESSIVE SEARCH for Weight
+            // We look for any column that looks like weight per spot
+            const weightKeywords = [
+                'PESO_1PA', 'KG_1PA', 'KG_PA', 
+                'PESO_1_PA', 'KG_1_PA',
+                'PESO_STRUTTURA', 'KG_STRUTTURA',
+                'PESO_TOTALE', 'TOTALE_PESO',
+                'PESO', 'KG'
+            ];
 
-            // Priority 3: Exact fallbacks
-            if (!weightKey) {
-                 const fallbacks = ['PESO', 'KG', 'PESO_TOTALE', 'TOTALE_PESO', 'KG_STRUTTURA'];
-                 weightKey = keys.find(k => fallbacks.includes(k));
+            let weightKey = null;
+
+            // Try exact includes first
+            for (const kw of weightKeywords) {
+                weightKey = keys.find(k => k.includes(kw));
+                if (weightKey) break;
             }
 
             if (weightKey) {
@@ -170,10 +170,9 @@ export const calculateTotalWeight = (
         }
     }
 
-    // Fallback if not found in CSV
+    // Fallback only if strictly 0
     if (structureUnitWeight === 0) {
-        structureUnitWeight = 200;
-        // Optional: console.warn(`Weight not found for model ${modelId}, using fallback 200kg`);
+        structureUnitWeight = 200; // Safe fallback as per user frustration, but we try hard to find it above
     }
 
     result.structure = spots * structureUnitWeight;
@@ -250,7 +249,7 @@ export const explainCalculation = (
 
         if (timeFor2 > 0) {
             const pairs = numBallasts / 2;
-            ballastTotalTime = pairs * timeFor2;
+            ballastTotalTime = pairs * timeFor2; 
             explanation += `4. ZAVORRE: Servono ${numBallasts} zavorre. Il tempo (${source}) è di ${timeFor2} ore ogni 2 zavorre.\n`;
             explanation += `   -> Calcolo: (${numBallasts} / 2) * ${timeFor2} = ${ballastTotalTime.toFixed(2)} ore extra.\n`;
         } else {
