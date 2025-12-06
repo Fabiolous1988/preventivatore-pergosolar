@@ -29,7 +29,6 @@ const findCostInTable = (costs: Record<string, number>, keywords: string[]): { n
     const availableKeys = Object.keys(costs);
     
     // 1. Strict "Includes" Search (Exact text priority)
-    // Cerca esattamente "BILICO CARICO COMPLETO"
     for (const kw of keywords) {
         const match = availableKeys.find(k => k.includes(kw));
         if (match && costs[match] > 0) {
@@ -38,7 +37,6 @@ const findCostInTable = (costs: Record<string, number>, keywords: string[]): { n
     }
 
     // 2. Loose Search (Strip spaces/symbols)
-    // Cerca "BILICOCARICOCOMPLETO" dentro "BILICO_CARICO_COMPLETO" o spazi doppi
     for (const kw of keywords) {
         const cleanKw = looseNormalize(kw);
         const match = availableKeys.find(k => looseNormalize(k).includes(cleanKw));
@@ -50,9 +48,13 @@ const findCostInTable = (costs: Record<string, number>, keywords: string[]): { n
     return null;
 };
 
-// KEYWORDS LISTS - Updated with User Requirements
+// --- VEHICLE CONSTANTS & KEYWORDS ---
+const MAX_WEIGHT_FURGONE = 1000;
+const MAX_WEIGHT_GRU = 16000;
+const MAX_WEIGHT_BILICO = 24000;
+
 const BILICO_KEYWORDS = [
-    "BILICO CARICO COMPLETO", // USER PRIORITY
+    "BILICO CARICO COMPLETO", 
     "AUTOARTICOLATO",
     "BILICO",
     "TIR",
@@ -61,7 +63,7 @@ const BILICO_KEYWORDS = [
 ];
 
 const GRU_KEYWORDS = [
-    "CAMION CON GRU E SCARICO", // USER PRIORITY
+    "CAMION CON GRU E SCARICO",
     "CAMION GRU", 
     "MOTRICE GRU", 
     "GRU"
@@ -72,6 +74,18 @@ const MOTRICE_KEYWORDS = [
     "DEDICATO", 
     "CAMION"
 ];
+
+// Helper to look up dynamic params from config or use defaults
+const getParam = (config: AppConfig, keys: string[], defaultVal: number): number => {
+    for (const key of keys) {
+        // Try strict match
+        if (config.customParams[key]) return config.customParams[key].value;
+        // Try loose match
+        const found = Object.keys(config.customParams).find(k => k.toUpperCase().includes(key.toUpperCase()));
+        if (found) return config.customParams[found].value;
+    }
+    return defaultVal;
+};
 
 export const calculateDeterministicCosts = (
     inputs: EstimateInputs,
@@ -125,6 +139,20 @@ export const calculateDeterministicCosts = (
     const internalLaborCost = internalLaborHours * config.internalHourlyRate;
     let isWeekendReturnApplied = false;
 
+    // --- CALCULATE VAN COST PER KM (RIGOROUS) ---
+    // Formula: (FuelPrice / KmPerLiter) + Wear + Tolls
+    const kmPerLiter = getParam(config, ['KM_PER_LITRO_FURGONE', 'KM_LITRO', 'CONSUMO_FURGONE'], 11);
+    const fuelPrice = getParam(config, ['COSTO_MEDIO_GASOLIO_EURO_LITRO', 'PREZZO_GASOLIO', 'COSTO_GASOLIO'], 1.80);
+    const wearCost = getParam(config, ['COSTO_USURA_MEZZO_EURO_KM', 'USURA_MEZZO', 'USURA'], 0.037);
+    const tollCost = getParam(config, ['COSTO_AUTOSTRADA_EURO_KM', 'AUTOSTRADA', 'PEDAGGI'], 0.09); // Default Italian highway avg if missing
+
+    const fuelCostPerKm = kmPerLiter > 0 ? (fuelPrice / kmPerLiter) : 0.16;
+    const vanCostPerKm = fuelCostPerKm + wearCost + tollCost;
+
+    debugBuffer += `--- COSTO FURGONE ---\n`;
+    debugBuffer += `Parametri: ${kmPerLiter} km/l, €${fuelPrice}/l Gasolio, €${wearCost}/km Usura, €${tollCost}/km Autostrada\n`;
+    debugBuffer += `Calcolo: (€${fuelPrice} / ${kmPerLiter}) + ${wearCost} + ${tollCost} = €${vanCostPerKm.toFixed(3)}/km\n`;
+
     if (internalTechs > 0) {
         laborLog += `• Interni: ${internalLaborHours.toFixed(1)}h * €${config.internalHourlyRate} = €${internalLaborCost.toFixed(2)}.\n`;
         
@@ -139,22 +167,22 @@ export const calculateDeterministicCosts = (
             livingLog += `• Hotel: €100 * ${nights} notti * ${internalTechs} tecnici = €${internalHotelCost}.\n`;
         }
 
-        // Travel (Company Vehicle)
+        // Travel (Company Vehicle for Techs)
         if (inputs.transportMode === TransportMode.COMPANY_VEHICLE) {
-            const fuelTollRate = 0.45; // Euro/km
             // Check weekend return
             let numberOfRoundTrips = 1;
             if (inputs.returnOnWeekends || (hasWeekendOverlap(inputs.startDate, days) && days > 5)) {
                 isWeekendReturnApplied = true;
-                // Add a round trip for every weekend roughly
                 const weeks = Math.floor(days / 5);
                 numberOfRoundTrips = 1 + weeks;
                 travelLog += `• Rientro Weekend applicato: ${numberOfRoundTrips} viaggi A/R.\n`;
             }
 
             const totalKm = distanceKm * 2 * numberOfRoundTrips;
-            internalTravelCost = totalKm * fuelTollRate;
-            travelLog += `• Mezzi Aziendali (Tecnici): ${totalKm.toFixed(0)} km totali * €${fuelTollRate}/km = €${internalTravelCost.toFixed(2)}.\n`;
+            internalTravelCost = totalKm * vanCostPerKm;
+            
+            travelLog += `• Mezzi Aziendali (Tecnici): ${totalKm.toFixed(0)} km * €${vanCostPerKm.toFixed(2)}/km = €${internalTravelCost.toFixed(2)}.\n`;
+            travelLog += `  (Dettaglio Km: Gasolio €${fuelCostPerKm.toFixed(2)} + Usura €${wearCost.toFixed(3)} + Pedaggi €${tollCost.toFixed(2)})\n`;
 
             // Travel Time Cost for Techs (Hourly rate while driving)
             const totalTravelHours = travelTimeOneWay * 2 * numberOfRoundTrips * internalTechs;
@@ -170,7 +198,6 @@ export const calculateDeterministicCosts = (
     // --- 4. EXTERNAL COSTS (Fixed Rate) ---
     const externalLaborCost = externalLaborHours * config.externalHourlyRate;
     if (externalTechs > 0) {
-         // Append to labor log
          categoryExplanations["Lavoro"] += `• Esterni (All-in): ${externalLaborHours.toFixed(1)}h * €${config.externalHourlyRate} = €${externalLaborCost.toFixed(2)}.\n`;
     }
 
@@ -196,31 +223,46 @@ export const calculateDeterministicCosts = (
         provinceCosts = inputs.logisticsConfig[inputs.destinationProvince];
     }
 
-    // --- VEHICLE SELECTION LOGIC ---
-    // 1. BILICO: Heavy weight (> 13500kg approx for safety) OR many spots
-    // 2. CAMION GRU: > 1000kg (too heavy for van)
-    // 3. FURGONE: Light weight (Techs carry it)
-
+    // --- VEHICLE SELECTION LOGIC (STRICT) ---
+    // User Rules:
+    // Furgone: <= 1000kg
+    // Camion Gru: > 1000kg AND <= 16000kg
+    // Bilico: > 16000kg (Max 24000kg)
+    
     let vehicleType = "FURGONE"; 
     
-    if (totalWeightKg > 13500) {
-        vehicleType = "BILICO";
-    } else if (totalWeightKg > 1000 || inputs.includeBallast) {
-        // Even if weight is low, ballasts usually require a truck/crane if not huge
-        vehicleType = "GRU";
-    } else {
+    if (totalWeightKg <= MAX_WEIGHT_FURGONE) {
         vehicleType = "FURGONE";
+        debugBuffer += `Veicolo: FURGONE (Peso <= ${MAX_WEIGHT_FURGONE}kg)\n`;
+    } else if (totalWeightKg <= MAX_WEIGHT_GRU) {
+        vehicleType = "GRU";
+        debugBuffer += `Veicolo: GRU (Peso > 1000kg e <= ${MAX_WEIGHT_GRU}kg)\n`;
+    } else {
+        vehicleType = "BILICO";
+        debugBuffer += `Veicolo: BILICO (Peso > ${MAX_WEIGHT_GRU}kg)\n`;
     }
-    
-    logisticsLog += `• Mezzo Richiesto: ${vehicleType} (basato su peso/tipologia).\n`;
-    debugBuffer += `Veicolo Selezionato: ${vehicleType}\n`;
+
+    logisticsLog += `• Mezzo Richiesto: ${vehicleType}.\n`;
 
     // --- COST LOOKUP ---
     if (vehicleType === "FURGONE") {
-        materialTransportCost = 0;
-        logisticsMethod = "Furgone Aziendale (Incluso)";
-        logisticsLog += `• Materiale caricato su furgone tecnici (Costo incluso nel viaggio personale).\n`;
+        // Se il materiale sta nel furgone...
+        if (inputs.transportMode === TransportMode.COMPANY_VEHICLE && internalTechs > 0) {
+            // Se i tecnici vanno col furgone, il materiale viaggia con loro.
+            materialTransportCost = 0;
+            logisticsMethod = "Furgone Aziendale (Con Tecnici)";
+            logisticsLog += `• Materiale caricato su furgone tecnici (Costo incluso nel viaggio personale).\n`;
+        } else {
+            // Se i tecnici non usano il furgone (es. Treno/Aereo), dobbiamo mandare un furgone apposta per il materiale?
+            // Assumiamo spedizione dedicata con il nostro furgone.
+            const totalKm = distanceKm * 2; 
+            materialTransportCost = totalKm * vanCostPerKm;
+            logisticsMethod = "Furgone Aziendale (Dedicato)";
+            logisticsLog += `• Spedizione dedicata Furgone: ${totalKm.toFixed(0)}km * €${vanCostPerKm.toFixed(2)} = €${materialTransportCost.toFixed(2)}.\n`;
+            logisticsLog += `  (Usa parametri consumo furgone aziendale come sopra).\n`;
+        }
     } else if (provinceCosts) {
+        // Mezzi Pesanti (GRU o BILICO) -> Tabella Logistica
         let match: { name: string, cost: number } | null = null;
         let searchKeywords: string[] = [];
 
@@ -255,13 +297,13 @@ export const calculateDeterministicCosts = (
     } else {
          logisticsLog += `• Provincia non trovata per Logistica. Uso stima.\n`;
          // Fallback logic for unknown province
-         const ratePerKm = vehicleType === 'BILICO' ? 2.5 : 1.5;
+         const ratePerKm = vehicleType === 'BILICO' ? 2.5 : (vehicleType === 'GRU' ? 1.8 : 0.6);
          materialTransportCost = distanceKm * 2 * ratePerKm;
          logisticsMethod = `${vehicleType} (STIMA)`;
     }
 
     // Forklift Logic
-    // If we use BILICO or MOTRICE (without Crane) and customer has NO forklift, we rent one.
+    // If we use BILICO (without Crane) and customer has NO forklift, we rent one.
     // If we use GRU, the crane does the job.
     if (!inputs.hasForklift && vehicleType !== "GRU" && vehicleType !== "FURGONE") {
         forkliftCost = 350 * days; 
