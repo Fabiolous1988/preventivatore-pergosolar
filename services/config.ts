@@ -38,8 +38,9 @@ const parseFloatItalian = (input: any): number => {
     // Remove spaces entirely (handles '1 200,50')
     str = str.replace(/\s/g, '');
     
-    // Remove typical currency symbols
-    str = str.replace(/[€$£]/g, '');
+    // Remove typical currency symbols and units like 'kg'
+    str = str.replace(/[€$£%]/g, '');
+    str = str.replace(/kg/gi, ''); 
     
     if (str === '') return 0;
 
@@ -166,7 +167,15 @@ export const fetchModelsConfig = async (): Promise<ModelsConfig | null> => {
 
         const delimiter = detectDelimiter(rows[0]);
         // Header row
-        const headers = parseCSVLine(rows[0], delimiter).map(h => h.trim().toUpperCase());
+        // NORMALIZE HEADERS: Remove BOM, Trim, Uppercase, Remove Dots/Parens, Replace spaces with underscores
+        const headers = parseCSVLine(rows[0], delimiter).map(h => 
+            h.replace(/^\uFEFF/, '')
+             .trim()
+             .toUpperCase()
+             .replace(/\./g, '') // Remove dots (P.A. -> PA)
+             .replace(/[()]/g, '') // Remove parenthesis ((KG) -> KG)
+             .replace(/\s+/g, '_')
+        );
         
         const config: ModelsConfig = {};
 
@@ -204,29 +213,48 @@ export const fetchLogisticsConfig = async (): Promise<LogisticsConfig | null> =>
         if (rows.length < 2) return null;
         
         const delimiter = detectDelimiter(rows[0]);
-        const headers = parseCSVLine(rows[0], delimiter).map(h => h.trim().toUpperCase());
+        // Normalize Logistics Headers - LESS AGGRESSIVE
+        // Keep original wording (e.g. "BILICO 13.60")
+        const headers = parseCSVLine(rows[0], delimiter).map(h => 
+             h.replace(/^\uFEFF/, '') // Remove BOM
+              .trim()
+              .toUpperCase()
+        );
         
         const config: LogisticsConfig = {};
         
-        // Check if there is a 'PROVINCIA' or 'PROV' column
-        const provIndex = headers.findIndex(h => h.includes('PROV'));
-        if (provIndex === -1) return null;
+        // Check for 'SIG' (exact), 'SIGLA', or 'PROVINCIA' column
+        let provIndex = headers.findIndex(h => h === 'SIG'); // Priority 1: Exact 'SIG' (User Request)
+        if (provIndex === -1) {
+            provIndex = headers.findIndex(h => h === 'SIGLA'); // Priority 2
+        }
+        if (provIndex === -1) {
+            provIndex = headers.findIndex(h => h.includes('PROV') || h.includes('DEST')); // Priority 3
+        }
+
+        if (provIndex === -1) {
+            console.error("Logistics CSV missing Province/SIG column. Headers found:", headers);
+            return null;
+        }
+
+        console.log(`Logistics CSV: Using column '${headers[provIndex]}' as Province Code Key`);
 
         for (let i = 1; i < rows.length; i++) {
             const cols = parseCSVLine(rows[i], delimiter);
             if (cols.length <= provIndex) continue;
 
-            const province = cols[provIndex].trim().toUpperCase();
-            if (!province || province.length > 2) continue; // Basic validation
+            const rawProv = cols[provIndex].trim().toUpperCase();
+            if (!rawProv) continue;
 
-            config[province] = {};
+            config[rawProv] = {};
             
             cols.forEach((colVal, idx) => {
                 if (idx === provIndex) return;
                 const header = headers[idx];
                 const val = parseFloatItalian(colVal);
-                if (val > 0) {
-                    config[province][header] = val;
+                // We store even 0 values if header exists, just in case
+                if (!isNaN(val)) {
+                    config[rawProv][header] = val;
                 }
             });
         }

@@ -19,20 +19,59 @@ const hasWeekendOverlap = (startDate: string, durationDays: number): boolean => 
     return false;
 };
 
+// Helper to normalize strings for loose matching (removes spaces and symbols)
+// E.g. "BILICO  CARICO" -> "BILICOCARICO"
+const looseNormalize = (str: string) => str.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+
 // Helper to find a value in the province record with flexible key matching
 const findCostInTable = (costs: Record<string, number>, keywords: string[]): { name: string, cost: number } | null => {
     if (!costs) return null;
     const availableKeys = Object.keys(costs);
     
+    // 1. Strict "Includes" Search (Exact text priority)
+    // Cerca esattamente "BILICO CARICO COMPLETO"
     for (const kw of keywords) {
-        // Strict inclusion check (case insensitive)
-        const match = availableKeys.find(k => k.toUpperCase().includes(kw));
+        const match = availableKeys.find(k => k.includes(kw));
         if (match && costs[match] > 0) {
             return { name: match, cost: costs[match] };
         }
     }
+
+    // 2. Loose Search (Strip spaces/symbols)
+    // Cerca "BILICOCARICOCOMPLETO" dentro "BILICO_CARICO_COMPLETO" o spazi doppi
+    for (const kw of keywords) {
+        const cleanKw = looseNormalize(kw);
+        const match = availableKeys.find(k => looseNormalize(k).includes(cleanKw));
+        if (match && costs[match] > 0) {
+            return { name: match, cost: costs[match] };
+        }
+    }
+
     return null;
 };
+
+// KEYWORDS LISTS - Updated with User Requirements
+const BILICO_KEYWORDS = [
+    "BILICO CARICO COMPLETO", // USER PRIORITY
+    "AUTOARTICOLATO",
+    "BILICO",
+    "TIR",
+    "13.60",
+    "24T"
+];
+
+const GRU_KEYWORDS = [
+    "CAMION CON GRU E SCARICO", // USER PRIORITY
+    "CAMION GRU", 
+    "MOTRICE GRU", 
+    "GRU"
+];
+
+const MOTRICE_KEYWORDS = [
+    "MOTRICE", 
+    "DEDICATO", 
+    "CAMION"
+];
 
 export const calculateDeterministicCosts = (
     inputs: EstimateInputs,
@@ -45,6 +84,10 @@ export const calculateDeterministicCosts = (
     let travelLog = "";
     let livingLog = "";
     let logisticsLog = "";
+    const categoryExplanations: Record<string, string> = {};
+    
+    let debugBuffer = `=== DEBUG DIAGNOSTIC (Generato il ${new Date().toLocaleTimeString()}) ===\n`;
+    debugBuffer += `Inputs: Prov Destinazione="${inputs.destinationProvince}", Model="${inputs.selectedModelId}", Posti=${inputs.parkingSpots}\n`;
 
     // --- 1. DURATION & DISTANCE ---
     let travelTimeOneWay = 0;
@@ -85,138 +128,170 @@ export const calculateDeterministicCosts = (
     if (internalTechs > 0) {
         laborLog += `• Interni: ${internalLaborHours.toFixed(1)}h * €${config.internalHourlyRate} = €${internalLaborCost.toFixed(2)}.\n`;
         
-        // Per Diem
+        // Per Diem (Vitto)
         internalPerDiemCost = 50 * days * internalTechs;
-        livingLog += `• Vitto: €50 * ${days}gg * ${internalTechs} pers = €${internalPerDiemCost.toFixed(2)}.\n`;
+        livingLog += `• Vitto: €50 * ${days}gg * ${internalTechs} tecnici = €${internalPerDiemCost}.\n`;
 
         // Hotel
-        let nights = Math.max(0, Math.ceil(days) - 1);
-        if (inputs.returnOnWeekends && hasWeekendOverlap(inputs.startDate, days)) {
-            nights = Math.max(0, nights - 2); 
-            isWeekendReturnApplied = true;
-            livingLog += `• Hotel: Notti ridotte per rientro weekend.\n`;
+        if (days > 1) {
+            const nights = Math.ceil(days - 1);
+            internalHotelCost = 100 * nights * internalTechs; // 100 euro/night approx
+            livingLog += `• Hotel: €100 * ${nights} notti * ${internalTechs} tecnici = €${internalHotelCost}.\n`;
         }
-        internalHotelCost = nights * 80 * internalTechs;
-        livingLog += `• Hotel: ${nights} notti * €80 * ${internalTechs} pers = €${internalHotelCost.toFixed(2)}.\n`;
 
-        // Tech Travel (Van)
+        // Travel (Company Vehicle)
         if (inputs.transportMode === TransportMode.COMPANY_VEHICLE) {
-            let trips = 1; 
-            if (isWeekendReturnApplied) trips = 2;
-            
-            const totalDist = distanceKm * 2 * trips;
-            const fuel = totalDist * 0.45; // €0.45/km van cost
-            const tolls = (distanceKm / 10) * 2 * trips; // approx tolls
-            internalTravelCost = fuel + tolls;
-            
-            const totalTravelHours = travelTimeOneWay * 2 * trips;
-            internalTravelTimeCost = totalTravelHours * config.internalHourlyRate * internalTechs;
-            
-            travelLog += `• Furgone Tecnici: ${totalDist}km totali (${trips} viaggi A/R).\n`;
-            travelLog += `  - Costo Km+Pedaggi: €${internalTravelCost.toFixed(2)}.\n`;
-            travelLog += `  - Costo Tempo Guida: €${internalTravelTimeCost.toFixed(2)} (${totalTravelHours.toFixed(1)}h tot).\n`;
-        } else {
-            // Public Transport
-            const ticketCost = (distanceKm * 0.15) * 2 * internalTechs;
-            internalTravelCost = ticketCost;
-            internalTravelTimeCost = (travelTimeOneWay * 2) * config.internalHourlyRate * internalTechs;
-            travelLog += `• Mezzi Pubblici: Biglietti €${ticketCost.toFixed(2)} + Tempo €${internalTravelTimeCost.toFixed(2)}.\n`;
+            const fuelTollRate = 0.45; // Euro/km
+            // Check weekend return
+            let numberOfRoundTrips = 1;
+            if (inputs.returnOnWeekends || (hasWeekendOverlap(inputs.startDate, days) && days > 5)) {
+                isWeekendReturnApplied = true;
+                // Add a round trip for every weekend roughly
+                const weeks = Math.floor(days / 5);
+                numberOfRoundTrips = 1 + weeks;
+                travelLog += `• Rientro Weekend applicato: ${numberOfRoundTrips} viaggi A/R.\n`;
+            }
+
+            const totalKm = distanceKm * 2 * numberOfRoundTrips;
+            internalTravelCost = totalKm * fuelTollRate;
+            travelLog += `• Mezzi Aziendali: ${totalKm.toFixed(0)} km totali * €${fuelTollRate}/km = €${internalTravelCost.toFixed(2)}.\n`;
+
+            // Travel Time Cost for Techs (Hourly rate while driving)
+            const totalTravelHours = travelTimeOneWay * 2 * numberOfRoundTrips * internalTechs;
+            internalTravelTimeCost = totalTravelHours * config.internalHourlyRate;
+            travelLog += `• Tempo Guida Tecnici: ${totalTravelHours.toFixed(1)}h totali * €${config.internalHourlyRate} = €${internalTravelTimeCost.toFixed(2)}.\n`;
         }
     }
-
-    // --- 4. EXTERNAL COSTS ---
+    
+    // Save Explanation
+    categoryExplanations["Lavoro"] = laborLog;
+    categoryExplanations["Vitto/Alloggio"] = livingLog;
+    
+    // --- 4. EXTERNAL COSTS (Fixed Rate) ---
     const externalLaborCost = externalLaborHours * config.externalHourlyRate;
     if (externalTechs > 0) {
-        laborLog += `• Esterni: ${externalLaborHours.toFixed(1)}h * €${config.externalHourlyRate} = €${externalLaborCost.toFixed(2)}.\n`;
+         // Append to labor log
+         categoryExplanations["Lavoro"] += `• Esterni (All-in): ${externalLaborHours.toFixed(1)}h * €${config.externalHourlyRate} = €${externalLaborCost.toFixed(2)}.\n`;
     }
 
-    // --- 5. LOGISTICS & HEAVY TRANSPORT (STRICT RULES) ---
-    let forkliftCost = 0;
+    // --- 5. LOGISTICS (The complex part) ---
     let materialTransportCost = 0;
-    let logisticsMethod = "Furgone Aziendale (Materiale Leggero)";
+    let forkliftCost = 0;
+    let logisticsMethod = "Nessuno";
 
-    // Forklift
-    if (inputs.includeBallast && !inputs.hasForklift) {
-        forkliftCost = 700 + (Math.max(0, days - 5) * 120);
-        logisticsLog += `• Noleggio Muletto: €${forkliftCost.toFixed(2)}.\n`;
+    // Debugging Logistics Config
+    if (!inputs.logisticsConfig) {
+        debugBuffer += "ERRORE: logisticsConfig non caricato.\n";
+    } else {
+        debugBuffer += "LogisticsConfig presente.\n";
     }
 
-    // --- WEIGHT CALCULATION (SYNCED WITH FRONTEND) ---
-    const spots = inputs.parkingSpots || 0;
-    const weights = calculateTotalWeight(inputs.selectedModelId || '', spots, inputs.includeBallast || false, inputs.modelsConfig || null);
-    const totalWeightKg = weights.total;
-
-    logisticsLog += `• Peso Totale Calcolato: ${totalWeightKg.toLocaleString()} kg (Struttura: ${weights.structure}kg, Zavorre: ${weights.ballast}kg).\n`;
-
-    // --- PROVINCE LOOKUP (DIRECT) ---
-    const destProv = inputs.destinationProvince ? inputs.destinationProvince.toUpperCase().trim() : "??";
-    logisticsLog += `• Provincia Destinazione: "${destProv}".\n`;
-
-    let tableCosts = null;
-    let availableProvinceKeys: string[] = [];
-    
-    if (inputs.logisticsConfig && destProv !== "??") {
-        const provKey = Object.keys(inputs.logisticsConfig).find(k => k.trim().toUpperCase() === destProv);
-        if (provKey) {
-            tableCosts = inputs.logisticsConfig[provKey];
-            availableProvinceKeys = Object.keys(tableCosts);
-        } else {
-            logisticsLog += `! ATTENZIONE: Provincia "${destProv}" non trovata nel CSV Logistica.\n`;
-        }
-    }
-
-    // --- VEHICLE SELECTION LOGIC (STRICT) ---
-    if (totalWeightKg < 1000) {
-        logisticsMethod = "Furgone Aziendale (Nessun costo extra)";
-        logisticsLog += `• Peso < 1000kg: Trasporto con furgone aziendale incluso.\n`;
-        materialTransportCost = 0;
-    } 
-    else if (totalWeightKg <= 16000) {
-        // CAMION CON GRU (1t - 16t)
-        const found = findCostInTable(tableCosts, ['GRU', 'CAMION', 'MOTRICE']);
-        if (found) {
-            materialTransportCost = found.cost;
-            logisticsMethod = `Camion con Gru (${found.name})`;
-            logisticsLog += `• Peso 1.000-16.000kg: Selezionato Camion con Gru. Costo Tabella per ${destProv}: €${materialTransportCost}.\n`;
-        } else {
-            // Fallback
-            materialTransportCost = Math.max(300, distanceKm * 1.8);
-            logisticsMethod = "Camion con Gru (Stima)";
-            logisticsLog += `! Tariffa Camion Gru non trovata per ${destProv}. Stima: €${materialTransportCost.toFixed(2)}.\n`;
-            if (tableCosts) logisticsLog += `  (Colonne disponibili: ${availableProvinceKeys.join(', ')})\n`;
-        }
-    } 
-    else if (totalWeightKg <= 24000) {
-        // BILICO (16t - 24t)
-        const found = findCostInTable(tableCosts, ['BILICO', 'AUTOARTICOLATO']);
-        if (found) {
-            materialTransportCost = found.cost;
-            logisticsMethod = `Bilico (${found.name})`;
-            logisticsLog += `• Peso 16.000-24.000kg: Selezionato Bilico. Costo Tabella per ${destProv}: €${materialTransportCost}.\n`;
-        } else {
-            materialTransportCost = Math.max(500, distanceKm * 2.5);
-            logisticsMethod = "Bilico (Stima)";
-            logisticsLog += `! Tariffa Bilico non trovata per ${destProv}. Stima: €${materialTransportCost.toFixed(2)}.\n`;
-            if (tableCosts) logisticsLog += `  (Colonne disponibili: ${availableProvinceKeys.join(', ')})\n`;
-        }
-    } 
-    else {
-        // > 24000kg -> Need Multiple Vehicles (Bilici)
-        const numBilici = Math.ceil(totalWeightKg / 24000);
-        const found = findCostInTable(tableCosts, ['BILICO', 'AUTOARTICOLATO']);
+    // Determine Province Cost Row
+    let provinceCosts: Record<string, number> | undefined;
+    if (inputs.logisticsConfig && inputs.destinationProvince) {
+        // Try strict
+        provinceCosts = inputs.logisticsConfig[inputs.destinationProvince];
+        debugBuffer += `Ricerca Provincia '${inputs.destinationProvince}': ${provinceCosts ? 'TROVATA' : 'NON TROVATA'}.\n`;
         
-        if (found) {
-            materialTransportCost = found.cost * numBilici;
-            logisticsMethod = `${numBilici}x Bilici (${found.name})`;
-            logisticsLog += `• Peso > 24.000kg (${totalWeightKg}kg): Necessari ${numBilici} Bilici. Costo Totale: €${materialTransportCost} (€${found.cost} cad).\n`;
+        if (provinceCosts) {
+            debugBuffer += `Colonne disponibili per ${inputs.destinationProvince}: ${Object.keys(provinceCosts).join(", ")}\n`;
         } else {
-            const singleBilicoEst = Math.max(500, distanceKm * 2.5);
-            materialTransportCost = singleBilicoEst * numBilici;
-            logisticsMethod = `${numBilici}x Bilici (Stima)`;
-            logisticsLog += `! Tariffa Bilico non trovata. Stima per ${numBilici} viaggi: €${materialTransportCost.toFixed(2)}.\n`;
-            if (tableCosts) logisticsLog += `  (Colonne disponibili: ${availableProvinceKeys.join(', ')})\n`;
+            // Fallback try find similar
+            const allProvs = Object.keys(inputs.logisticsConfig);
+            debugBuffer += `Province disponibili (prime 10): ${allProvs.slice(0, 10).join(", ")}...\n`;
+            // Check if user is searching for SIG (VR) but only Full names exist?
+            const maybeFull = allProvs.find(p => p.includes(inputs.destinationProvince!));
+            if (maybeFull) {
+                 debugBuffer += `SUGGERIMENTO: Trovata chiave simile '${maybeFull}'. Il CSV usa nomi estesi invece di SIG?\n`;
+            }
         }
     }
+
+    // Weight Calculation
+    const weightData = calculateTotalWeight(
+        inputs.selectedModelId || '', 
+        inputs.parkingSpots || 0, 
+        inputs.includeBallast || false, 
+        inputs.modelsConfig || null
+    );
+    const totalWeightKg = weightData.total;
+    logisticsLog += `• Peso Totale Stimato: ${totalWeightKg.toLocaleString()} kg (Struttura: ${weightData.structure} + Zavorre: ${weightData.ballast}).\n`;
+
+    // Logic for Vehicle Selection
+    let vehicleType = "FURGONE"; 
+    // Thresholds
+    if (totalWeightKg > 16000) {
+        vehicleType = "BILICO";
+    } else if (totalWeightKg > 1500) {
+        // Heavy but not full truck load
+        if (inputs.hasForklift) {
+            vehicleType = "MOTRICE"; // Standard truck, customer unloads
+        } else {
+            vehicleType = "GRU"; // Truck with crane needed
+        }
+    }
+
+    logisticsLog += `• Veicolo Selezionato: ${vehicleType} (in base a peso e muletto).\n`;
+
+    // Lookup Cost
+    if (provinceCosts) {
+        let match: { name: string, cost: number } | null = null;
+        let searchKeywords: string[] = [];
+
+        if (vehicleType === "BILICO") {
+            searchKeywords = BILICO_KEYWORDS;
+            match = findCostInTable(provinceCosts, searchKeywords);
+        } else if (vehicleType === "GRU") {
+            searchKeywords = GRU_KEYWORDS;
+            match = findCostInTable(provinceCosts, searchKeywords);
+        } else if (vehicleType === "MOTRICE") {
+            searchKeywords = MOTRICE_KEYWORDS;
+            match = findCostInTable(provinceCosts, searchKeywords);
+            // Fallback: if motrice not found, check GRU cost as it covers it
+            if (!match) match = findCostInTable(provinceCosts, GRU_KEYWORDS);
+        }
+
+        debugBuffer += `Ricerca Veicolo '${vehicleType}' con keywords: [${searchKeywords.join(", ")}]\n`;
+
+        if (match) {
+            materialTransportCost = match.cost;
+            logisticsMethod = `${match.name} (Tabella)`;
+            logisticsLog += `• Trovato costo in tabella: €${match.cost} (Colonna: ${match.name}).\n`;
+            debugBuffer += `MATCH TROVATO: Colonna="${match.name}" Valore=${match.cost}\n`;
+        } else {
+            debugBuffer += `NESSUN MATCH trovate nelle colonne. Fallback su stima.\n`;
+            logisticsLog += `• DATO MANCANTE NEL CSV: Nessuna colonna corrisponde alle keywords per ${vehicleType}.\n`;
+        }
+    } else {
+         logisticsLog += `• Provincia non trovata nel file Logistica. Uso stima km.\n`;
+    }
+
+    // Fallback Estimate if CSV lookup failed
+    if (materialTransportCost === 0 && !inputs.excludeOriginTransfer) {
+        const ratePerKm = vehicleType === 'BILICO' ? 2.5 : vehicleType === 'GRU' ? 1.8 : 1.2;
+        materialTransportCost = distanceKm * 2 * ratePerKm;
+        logisticsMethod = `${vehicleType} (STIMA - Dato mancante in CSV)`;
+        logisticsLog += `• Costo stimato: ${distanceKm}km * 2 * €${ratePerKm}/km = €${materialTransportCost.toFixed(2)}.\n`;
+    }
+
+    // Forklift Rental (if needed and not provided)
+    // If vehicle is GRU, we assume unloading is included in transport cost (usually)
+    // If vehicle is MOTRICE or BILICO and NO forklift at site, we might need to rent one locally.
+    if (!inputs.hasForklift && vehicleType !== "GRU" && vehicleType !== "FURGONE") {
+        forkliftCost = 350 * days; // Estimate rental
+        logisticsLog += `• Noleggio Muletto/Sollevatore: €350 * ${days}gg = €${forkliftCost} (Cliente sprovvisto).\n`;
+    }
+
+    if (inputs.excludeOriginTransfer) {
+        // If explicitly excluded, we zero out the material transport
+        if (materialTransportCost > 0) {
+            logisticsLog += `• (Nota: Trasporto materiale calcolato in €${materialTransportCost} ma ESCLUSO da opzione utente).\n`;
+            materialTransportCost = 0;
+            logisticsMethod = "Escluso (Ritiro Cliente)";
+        }
+    }
+
+    categoryExplanations["Viaggio"] = travelLog + logisticsLog;
 
     // --- 6. TOTALS ---
     const totalCost = 
@@ -226,39 +301,51 @@ export const calculateDeterministicCosts = (
         internalHotelCost + 
         internalPerDiemCost + 
         externalLaborCost + 
-        forkliftCost + 
-        materialTransportCost;
+        materialTransportCost + 
+        forkliftCost;
 
-    let marginDec = config.defaultMargin / 100;
-    const salesPrice = totalCost / (1 - marginDec);
-    const discountVal = salesPrice * ((inputs.discountPercent || 0) / 100);
-    const finalSalesPrice = salesPrice - discountVal;
-    const marginAmount = finalSalesPrice - totalCost;
+    // Sales Price Calculation (Cost / (1 - Margin%))
+    // Margin is percentage of SALES PRICE, not markup on cost
+    const marginDec = (inputs.marginPercent || 30) / 100;
+    let salesPrice = totalCost;
+    if (marginDec < 1) {
+        salesPrice = totalCost / (1 - marginDec);
+    }
+    
+    // Apply Volume Discount if any
+    if (inputs.discountPercent && inputs.discountPercent > 0) {
+        const discountAmount = salesPrice * (inputs.discountPercent / 100);
+        salesPrice -= discountAmount;
+        categoryExplanations["Altro"] = (categoryExplanations["Altro"] || "") + `• Applicato Sconto Volume ${inputs.discountPercent}%: -€${discountAmount.toFixed(2)}\n`;
+    }
+    
+    const marginAmount = salesPrice - totalCost;
 
     return {
         distanceKm,
         travelDurationHours: travelTimeOneWay,
+        
         internalTravelCost,
         internalTravelTimeCost,
         internalHotelCost,
         internalPerDiemCost,
         internalLaborCost,
+        
         externalLaborCost,
+        
         forkliftCost,
         materialTransportCost,
+        
         totalCost,
-        salesPrice: finalSalesPrice,
+        salesPrice,
         marginAmount,
+        
         isWeekendReturnApplied,
         activeTechs: totalTechs,
         totalManHours: internalLaborHours + externalLaborHours,
         logisticsMethod,
-        categoryExplanations: {
-            "Lavoro": laborLog,
-            "Viaggio": travelLog,
-            "Vitto/Alloggio": livingLog,
-            "Altro": logisticsLog,
-            "Viaggio/Logistica": travelLog + "\n" + logisticsLog
-        }
+        
+        categoryExplanations,
+        debugLog: debugBuffer
     };
 };

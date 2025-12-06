@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from "@google/genai";
 import { EstimateInputs, EstimateResult, TransportMode, AppConfig, ComputedCosts } from "../types";
 import { getStoredApiKey } from "./storage";
@@ -16,21 +17,10 @@ const cleanAndParseJSON = (text: string) => {
     }
     throw new Error("No JSON block found");
   } catch (e) {
-    console.warn("JSON Parse failed, attempting regex fallback. Text snippet:", text.substring(0, 50));
-    
-    // Fallback: Try to find numbers for distance in the text (e.g. "120 km")
-    // Matches "123.45 km" or "123,45 km"
-    const distMatch = text.match(/(\d+(?:[.,]\d+)?)\s*(?:km|chilometri)/i);
-    
-    if (distMatch) {
-        const val = parseFloat(distMatch[1].replace(',', '.'));
-        return {
-            distanceKm: val,
-            duration: "Stima da testo"
-        };
-    }
-    
-    throw new Error("Errore nella lettura della risposta AI. Riprova.");
+    console.warn("JSON Parse warning:", e);
+    // If strict JSON parsing fails, we might just throw or return empty depending on context
+    // For the explanation step, we really need JSON.
+    throw e;
   }
 };
 
@@ -77,32 +67,72 @@ export const calculateEstimate = async (
   let durationText = "";
   
   try {
-    // FIXED: Removed responseMimeType: "application/json" because it is not supported with googleMaps tool.
-    // We rely on the prompt to get JSON-like output.
+    // REVISED: Use Natural Language Prompt instead of enforcing JSON.
+    // Tools work best when the model can output natural text describing the tool result.
     const mapResponse = await ai.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: `Usa Google Maps per calcolare il percorso stradale tra ${inputs.origin} e ${inputs.destination}.
-        Restituisci ESCLUSIVAMENTE un oggetto JSON valido (senza markdown o altro testo) con questo formato: 
-        { "distanceKm": numero, "duration": "stringa" }.
-        Se non riesci a calcolare, restituisci: { "distanceKm": 0, "duration": "N/A" }`,
+        contents: `Calcola il percorso stradale tra ${inputs.origin} e ${inputs.destination}.
+        
+        Rispondi ESATTAMENTE con questo formato:
+        DISTANZA: [numero] km
+        DURATA: [tempo]
+        
+        Esempio:
+        DISTANZA: 120,5 km
+        DURATA: 1 ora 15 min`,
         config: { 
             tools: [{ googleMaps: {} }],
-            // responseMimeType: "application/json" // REMOVED to avoid 400 INVALID_ARGUMENT error
         }
     });
     
-    // The response text might contain grounding metadata, but we attempt to parse the JSON output
-    // cleanAndParseJSON handles potential markdown wrappers
-    const mapData = cleanAndParseJSON(mapResponse.text);
-    distanceKm = Number(mapData.distanceKm) || 0;
-    durationText = mapData.duration || "";
+    const text = mapResponse.text || "";
+    console.log("Maps Raw Response:", text);
+
+    // ROBUST REGEX PARSING
+    // Match "DISTANZA: 1.200,5 km" or just "1.200,5 km"
+    const distMatch = text.match(/DISTANZA:\s*([\d\.,]+)\s*(?:km|chilometri)/i) || 
+                      text.match(/([\d\.,]+)\s*(?:km|chilometri)/i);
+
+    if (distMatch) {
+        let numStr = distMatch[1];
+        // Normalization for Italian/European number format common in Maps output
+        // Remove dots (thousands separators)
+        // Replace comma with dot (decimal)
+        // Example: "1.200,50" -> "1200.50"
+        // Example: "120" -> "120"
+        
+        // Simple heuristic: if string has '.' AND ',', assume '.' is thousand separator
+        // If string has only '.', assume it is thousand separator if followed by 3 digits (Maps style) or just handle as Italian format preference.
+        // SAFEST: Remove all dots, replace comma with dot.
+        numStr = numStr.replace(/\./g, '').replace(',', '.');
+        
+        distanceKm = parseFloat(numStr);
+    }
+
+    // Match Duration
+    const durMatch = text.match(/DURATA:\s*(.+)/i) || 
+                     text.match(/((?:\d+\s*(?:ore|ora|h))?\s*(?:\d+\s*(?:min|minuti))?)/i);
+
+    if (durMatch && durMatch[1].trim().length > 0) {
+        durationText = durMatch[1].trim();
+    } else {
+        // Fallback duration calculation
+        if (distanceKm > 0) {
+            durationText = `${(distanceKm / 80).toFixed(1)} ore (Stima)`;
+        } else {
+            durationText = "N/A";
+        }
+    }
+
+    if (isNaN(distanceKm) || distanceKm === 0) {
+        throw new Error("Distanza non trovata o pari a 0");
+    }
     
     console.log(`Maps Found: ${distanceKm} km, ${durationText}`);
 
   } catch (err) {
     console.warn("Maps Warning (using fallback):", err);
     // Fallback if maps fail: assume 100km just to let the calculator run
-    // This ensures the app doesn't crash completely if the map tool fails or returns non-JSON
     distanceKm = 100;
     durationText = "1 ora (Stima Fallback)";
   }
@@ -184,6 +214,9 @@ export const calculateEstimate = async (
             opt.categoryExplanations = costs.categoryExplanations;
         });
     }
+
+    // INJECT DEBUG LOG
+    parsed.debugLog = costs.debugLog;
 
     return parsed;
 

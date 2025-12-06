@@ -1,3 +1,4 @@
+
 import { PergolaModel, ModelsConfig } from "../types";
 
 // Base metadata for known models to keep UI nice (categories, lifting rules)
@@ -137,18 +138,44 @@ export const calculateTotalWeight = (
     if (spots <= 0) return result;
 
     // 1. Structure Weight
-    // Use heuristic (200kg/spot) OR try to find column in CSV
-    let structureUnitWeight = 200; 
+    let structureUnitWeight = 0; 
     
     if (modelsConfig && modelId) {
         const match = findModelRow(modelId, modelsConfig);
         if (match) {
-            // Check if there is a weight column (PESO_STRUTTURA_1PA or similar)
-            // This allows future CSV updates to drive weight
-            const csvWeight = getVal(match.row, ['PESO_STRUTTURA_1PA', 'PESO_1PA', 'KG_1PA']);
-            if (csvWeight > 0) structureUnitWeight = csvWeight;
+            const keys = Object.keys(match.row);
+            
+            // Search strategy for Weight Key
+            // Priority 1: Contains 'PESO' and '1PA' (or '1_PA', '1_POSTO')
+            let weightKey = keys.find(k => 
+                (k.includes('PESO') || k.includes('KG')) && 
+                (k.includes('1PA') || k.includes('1_PA') || k.includes('1_POSTO'))
+            );
+            
+            // Priority 2: Contains 'PESO' and 'STRUTTURA'
+            if (!weightKey) {
+                weightKey = keys.find(k => k.includes('PESO') && k.includes('STRUTTURA'));
+            }
+
+            // Priority 3: Exact fallbacks
+            if (!weightKey) {
+                 const fallbacks = ['PESO', 'KG', 'PESO_TOTALE', 'TOTALE_PESO', 'KG_STRUTTURA'];
+                 weightKey = keys.find(k => fallbacks.includes(k));
+            }
+
+            if (weightKey) {
+                const val = match.row[weightKey];
+                if (val > 0) structureUnitWeight = val;
+            }
         }
     }
+
+    // Fallback if not found in CSV
+    if (structureUnitWeight === 0) {
+        structureUnitWeight = 200;
+        // Optional: console.warn(`Weight not found for model ${modelId}, using fallback 200kg`);
+    }
+
     result.structure = spots * structureUnitWeight;
 
     // 2. Ballast Weight

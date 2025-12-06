@@ -1,3 +1,4 @@
+
 export enum ServiceType {
   FULL_INSTALLATION = 'Installazione Completa',
   SUPPORT = 'Supporto all\'Installazione', // Simplified generic support type
@@ -74,6 +75,7 @@ export interface TransportOption {
 export interface EstimateResult {
   options: TransportOption[];
   commonReasoning: string;
+  debugLog?: string; // NEW: Diagnostic info
 }
 
 export interface PergolaModel {
@@ -135,6 +137,9 @@ export interface ComputedCosts {
     
     // Detailed reasoning strings
     categoryExplanations: Record<string, string>;
+    
+    // Debug
+    debugLog: string;
 }
 
 // Map Model Name -> { Column Name -> Value }

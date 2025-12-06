@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { EstimateResult, TransportOption, CostItem } from '../types';
 import CostChart from './CostChart';
-import { FileText, TrendingUp, Info, Train, Plane, Car, CheckCircle2, AlertCircle, Briefcase, BedDouble, MapPin, Download, Pencil, RotateCcw, Save, HelpCircle, BoxSelect } from 'lucide-react';
+import { FileText, TrendingUp, Info, Train, Plane, Car, CheckCircle2, AlertCircle, Briefcase, BedDouble, MapPin, Download, Pencil, RotateCcw, Save, HelpCircle, BoxSelect, Bug, X } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -18,11 +18,15 @@ const ResultsDisplay: React.FC<Props> = ({ result }) => {
   // Track open tooltip for category explanation
   const [activeReasoning, setActiveReasoning] = useState<string | null>(null);
 
+  // Debug Modal State
+  const [isDebugOpen, setIsDebugOpen] = useState(false);
+
   // Reset selection and edit state when result changes (new AI generation)
   useEffect(() => {
     setSelectedOptionIndex(0);
     setIsEditMode(false);
     setActiveReasoning(null);
+    setIsDebugOpen(false);
     if (result && result.options) {
       // Deep copy for editing
       setEditedOptions(JSON.parse(JSON.stringify(result.options)));
@@ -282,6 +286,15 @@ const ResultsDisplay: React.FC<Props> = ({ result }) => {
         {/* Action Buttons */}
         <div className="flex gap-2">
             <button
+                onClick={() => setIsDebugOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm whitespace-nowrap border bg-red-50 text-red-700 border-red-200 hover:bg-red-100"
+                title="Vedi Logistica Raw"
+            >
+                <Bug className="w-4 h-4" />
+                Debug Dati
+            </button>
+
+            <button
                 onClick={() => setIsEditMode(!isEditMode)}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm whitespace-nowrap border ${
                     isEditMode 
@@ -318,6 +331,30 @@ const ResultsDisplay: React.FC<Props> = ({ result }) => {
               <Info className="w-4 h-4" />
               <span><strong>Modalità Modifica Attiva:</strong> Cambia gli importi nelle caselle qui sotto. Il Totale e il Margine verranno ricalcolati automaticamente. Disabilita per tornare ai dati AI originali.</span>
           </div>
+      )}
+
+      {/* DEBUG MODAL */}
+      {isDebugOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+                <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 rounded-t-xl">
+                    <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                        <Bug className="w-5 h-5 text-red-600" /> Diagnostica Lettura CSV
+                    </h3>
+                    <button onClick={() => setIsDebugOpen(false)} className="text-slate-400 hover:text-slate-600">
+                        <X className="w-6 h-6" />
+                    </button>
+                </div>
+                <div className="p-6 overflow-auto font-mono text-xs text-slate-700 bg-slate-50">
+                    <pre className="whitespace-pre-wrap">{result.debugLog || "Nessun dato di debug disponibile."}</pre>
+                </div>
+                <div className="p-4 border-t border-slate-200 bg-white rounded-b-xl flex justify-end">
+                    <button onClick={() => setIsDebugOpen(false)} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded text-slate-800 font-medium text-sm">
+                        Chiudi
+                    </button>
+                </div>
+            </div>
+        </div>
       )}
 
       {/* Top Level Cards */}
