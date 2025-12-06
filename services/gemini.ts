@@ -1,8 +1,8 @@
+
 import { GoogleGenAI } from "@google/genai";
 import { EstimateInputs, EstimateResult, TransportMode, AppConfig, ComputedCosts } from "../types";
 import { getStoredApiKey } from "./storage";
 import { DEFAULT_CONFIG } from "./config";
-import { calculateBallastCount } from "./calculator";
 import { calculateDeterministicCosts } from "./costEngine";
 
 const cleanAndParseJSON = (text: string) => {
@@ -17,8 +17,6 @@ const cleanAndParseJSON = (text: string) => {
     throw new Error("No JSON block found");
   } catch (e) {
     console.warn("JSON Parse warning:", e);
-    // If strict JSON parsing fails, we might just throw or return empty depending on context
-    // For the explanation step, we really need JSON.
     throw e;
   }
 };
@@ -28,7 +26,6 @@ const getClient = () => {
     return new GoogleGenAI({ apiKey: apiKey || '' });
 };
 
-// Simple chat function remains generic, but uses Flash for speed
 export const chatWithAgent = async (history: any[], message: string) => {
     const ai = getClient();
     try {
@@ -42,6 +39,62 @@ export const chatWithAgent = async (history: any[], message: string) => {
         console.error(e);
         return "Errore nella chat. Riprova.";
     }
+};
+
+// Robust text-to-number parsing for Maps output
+const parseDistanceString = (text: string): { km: number, durationStr: string } => {
+    let km = 0;
+    let durationStr = "N/A";
+
+    // 1. Extract Duration first
+    // Look for patterns like "2 ore 30 min", "1 h 10 min", "45 min"
+    const durMatch = text.match(/((?:\d+\s*(?:ore|ora|h|hours?))?\s*(?:\d+\s*(?:min|minuti|m))?)/i);
+    if (durMatch && durMatch[0].length > 2) {
+        durationStr = durMatch[0].trim();
+    }
+
+    // 2. Extract Distance
+    // Regex that catches: "1200 km", "1.200 km", "1,200.5 km", "12,5 km"
+    const kmRegex = /([\d\.,]+)\s*(?:km|chilometri)/i;
+    const kmMatch = text.match(kmRegex);
+
+    if (kmMatch) {
+        let rawNum = kmMatch[1].trim(); // e.g. "1.200" or "1,200" or "12,5"
+
+        // Heuristic to decide if "." is thousand or decimal separator
+        // If the duration indicates a long trip (>1 hour) but the number is small (<20) and has a dot, it's thousands.
+        const isLongTrip = durationStr.includes("ore") || durationStr.includes("h") || durationStr.includes("hour");
+        
+        // Remove all non-numeric chars except . and ,
+        // Try standard ParseFloat (US style: 1,200.50 -> 1200.5)
+        let valUS = parseFloat(rawNum.replace(/,/g, ''));
+        
+        // Try EU style (1.200,50 -> 1200.5)
+        let valEU = parseFloat(rawNum.replace(/\./g, '').replace(',', '.'));
+
+        if (isNaN(valUS)) valUS = 0;
+        if (isNaN(valEU)) valEU = 0;
+
+        // Decision logic
+        if (rawNum.includes('.') && !rawNum.includes(',')) {
+            // Ambiguous: "1.200". Is it 1.2 or 1200?
+            if (isLongTrip && valUS < 10 && valEU > 100) {
+                km = valEU; // It was a thousand separator
+            } else {
+                km = valUS; // Default to standard float
+            }
+        } else if (rawNum.includes(',') && !rawNum.includes('.')) {
+            // Ambiguous: "1,200" (US 1200) or "1,2" (EU 1.2)
+            // Usually Google Maps returns dots for decimals in API but commas in IT UI.
+            // Let's assume EU style for comma if single comma?
+            km = valEU;
+        } else {
+            // Mixed or clean number
+            km = Math.max(valUS, valEU);
+        }
+    }
+
+    return { km, durationStr };
 };
 
 export const calculateEstimate = async (
@@ -66,78 +119,35 @@ export const calculateEstimate = async (
   let durationText = "";
   
   try {
-    // REVISED PROMPT: Force explicit numeric output to avoid parsing errors
+    // SIMPLE PROMPT: Just asking for the path, allowing the tool to do its job naturally
     const mapResponse = await ai.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: `Calcola il percorso stradale reale tra "${inputs.origin}" e "${inputs.destination}".
-        Usa lo strumento Google Maps.
-        
-        Dopo aver trovato il percorso, estrai i dati e rispondi ESATTAMENTE con questo formato (senza testo introduttivo):
-        
-        DISTANZA_KM: [numero puro con punto decimale]
-        DURATA_TESTO: [testo durata]
-        
-        Esempio:
-        DISTANZA_KM: 120.5
-        DURATA_TESTO: 1 ora e 15 min`,
+        contents: `Calcola il percorso stradale tra "${inputs.origin}" e "${inputs.destination}". Dimmi i km totali e il tempo di guida stimato. Usa Google Maps.`,
         config: { 
             tools: [{ googleMaps: {} }],
         }
     });
     
     const text = mapResponse.text || "";
-    console.log("Maps Raw Response:", text);
+    console.log("Maps Response Raw:", text);
 
-    // Strict Parsing
-    const distMatch = text.match(/DISTANZA_KM:\s*([\d\.]+)/i);
-    if (distMatch) {
-        distanceKm = parseFloat(distMatch[1]);
-    } else {
-        // Fallback: try finding typical distance patterns if strict format failed
-        const looseMatch = text.match(/([\d\.,]+)\s*(?:km|chilometri)/i);
-        if (looseMatch) {
-            let numStr = looseMatch[1];
-            // Normalize European format (1.200,50) to JS (1200.50)
-            if (numStr.includes('.') && numStr.includes(',')) {
-                 numStr = numStr.replace(/\./g, '').replace(',', '.');
-            } else if (numStr.includes(',')) {
-                 numStr = numStr.replace(',', '.');
-            }
-            // If only dots, assume they are thousands separators if value > 1000 logic fits, OR user is passing English format.
-            // But standardizing on comma for decimal in IT context suggests '.' is thousands.
-            // However, 10.5 km is 10.5. 
-            // We'll trust parseFloat for simple dot cases unless it looks huge.
-            distanceKm = parseFloat(numStr);
-        }
-    }
+    const parsed = parseDistanceString(text);
+    distanceKm = parsed.km;
+    durationText = parsed.durationStr;
 
-    // Match Duration
-    const durMatch = text.match(/DURATA_TESTO:\s*(.+)/i) || 
-                     text.match(/DURATA:\s*(.+)/i) ||
-                     text.match(/((?:\d+\s*(?:ore|ora|h))?\s*(?:\d+\s*(?:min|minuti))?)/i);
-
-    if (durMatch && durMatch[1].trim().length > 0) {
-        durationText = durMatch[1].trim();
-    } else {
-        if (distanceKm > 0) durationText = `${(distanceKm / 80).toFixed(1)} h (Stima)`;
-        else durationText = "N/A";
-    }
-
-    if (isNaN(distanceKm) || distanceKm <= 0.1) {
-        // Only throw if we truly failed. If map returns 0, maybe same city?
-        // Let's assume same city = 10km for logistics
-        console.warn("Distanza 0 o non trovata. Uso fallback locale.");
-        distanceKm = 10; 
-        durationText = "20 min (Stima locale)";
+    // Fallback if still 0
+    if (distanceKm <= 0.1) {
+        console.warn("Maps returned ~0 km. Using fallback.");
+        distanceKm = 50; 
+        durationText = "Stima Fallback (50km)";
     }
     
     console.log(`Maps Final: ${distanceKm} km, ${durationText}`);
 
   } catch (err) {
     console.warn("Maps Error (using fallback):", err);
-    // Fallback if maps fail completely
     distanceKm = 50;
-    durationText = "45 min (Stima Fallback)";
+    durationText = "Stima Fallback (Error)";
   }
 
   // --- Step 2: Deterministic Calculation (Code) ---
@@ -148,34 +158,32 @@ export const calculateEstimate = async (
   // --- Step 3: Formatting & Explanation (Flash) ---
   if (onStatusUpdate) onStatusUpdate("Generazione report finale...");
 
-  // We construct the "Prompt" not as a request to calculate, but as a request to FORMAT the already calculated data.
-  // This ensures the AI doesn't hallucinate numbers.
   const prompt = `
-    Sei "OptiCost", agente preventivatore.
+    Sei "OptiCost".
     
-    Ho già calcolato i costi rigorosamente tramite codice. 
-    Il tuo compito è SOLO creare il JSON finale e scrivere una spiegazione discorsiva ("commonReasoning") in italiano professionale, giustificando le voci.
+    Ho già calcolato i costi rigorosamente.
+    Il tuo compito è SOLO creare il JSON finale e scrivere una spiegazione discorsiva ("commonReasoning").
     
-    DATI CALCOLATI (USALI ESATTAMENTE COSÌ, NON RICALCOLARE):
+    DATI CALCOLATI (USALI ESATTAMENTE COSÌ):
     - Distanza: ${costs.distanceKm} km (${costs.travelDurationHours.toFixed(1)}h guida)
     - Modalità: ${inputs.transportMode}
     - Squadra Interna: ${internalTechsCount} tecnici. Costo Lavoro: €${costs.internalLaborCost.toFixed(2)}. Costo Viaggio: €${costs.internalTravelCost.toFixed(2)}. Costo Tempo Viaggio: €${costs.internalTravelTimeCost.toFixed(2)}. Hotel: €${costs.internalHotelCost.toFixed(2)}. Vitto: €${costs.internalPerDiemCost.toFixed(2)}.
-    - Squadra Esterna: ${externalTechsCount} tecnici. Costo Lavoro Totale (All-in): €${costs.externalLaborCost.toFixed(2)}.
-    - Logistica: Muletto €${costs.forkliftCost.toFixed(2)}. Trasporto Materiale (€${costs.materialTransportCost.toFixed(2)} - Metodo: ${costs.logisticsMethod}).
-    - Rientro Weekend Applicato? ${costs.isWeekendReturnApplied ? 'SI (Viaggi raddoppiati)' : 'NO'}.
+    - Squadra Esterna: ${externalTechsCount} tecnici. Costo Lavoro Totale: €${costs.externalLaborCost.toFixed(2)}.
+    - Logistica: Muletto €${costs.forkliftCost.toFixed(2)}. Trasporto Materiale €${costs.materialTransportCost.toFixed(2)} (${costs.logisticsMethod}).
+    - Rientro Weekend? ${costs.isWeekendReturnApplied ? 'SI' : 'NO'}.
     
     TOTALI:
-    - Costo Vivo Totale: €${costs.totalCost.toFixed(2)}
-    - Prezzo Vendita (Scontato): €${costs.salesPrice.toFixed(2)}
+    - Costo Vivo: €${costs.totalCost.toFixed(2)}
+    - Prezzo Vendita: €${costs.salesPrice.toFixed(2)}
     - Margine: €${costs.marginAmount.toFixed(2)}
     
-    OUTPUT RICHIESTO (JSON):
+    OUTPUT JSON:
     {
       "options": [
         {
           "id": "opt_final",
           "methodName": "${inputs.useInternalTeam && inputs.useExternalTeam ? 'Squadra Mista' : inputs.useInternalTeam ? 'Squadra Interna' : 'Squadra Esterna'}",
-          "logisticsSummary": "Descrivi mezzi, pesi e se c'è muletto o rientro weekend.",
+          "logisticsSummary": "Descrivi mezzi, pesi e logistica.",
           "breakdown": [
              { "category": "Lavoro", "description": "Manodopera Interna (${internalTechsCount} tecnici)", "amount": ${costs.internalLaborCost.toFixed(2)} },
              { "category": "Lavoro", "description": "Manodopera Esterna (${externalTechsCount} tecnici)", "amount": ${costs.externalLaborCost.toFixed(2)} },
@@ -191,10 +199,8 @@ export const calculateEstimate = async (
           "marginAmount": ${costs.marginAmount.toFixed(2)}
         }
       ],
-      "commonReasoning": "Spiega i totali. Menziona esplicitamente se è stato applicato il 'Rientro Weekend' o il 'Noleggio Muletto' in base ai dati forniti. Conferma che i costi esterni sono all-inclusive. Sottolinea lo sconto volume se applicato."
+      "commonReasoning": "Spiegazione sintetica dei totali."
     }
-    
-    IMPORTANTE: Rimuovi dal breakdown le voci con importo 0.
   `;
 
   try {
@@ -209,16 +215,11 @@ export const calculateEstimate = async (
     const response = await generatePromise;
     const parsed = cleanAndParseJSON(response.text);
 
-    // INJECT DETERMINISTIC EXPLANATIONS
-    // We overwrite or add the explanations generated by the cost engine
-    // to ensure the UI shows the EXACT math used.
     if (parsed.options && parsed.options.length > 0) {
         parsed.options.forEach((opt: any) => {
             opt.categoryExplanations = costs.categoryExplanations;
         });
     }
-
-    // INJECT DEBUG LOG
     parsed.debugLog = costs.debugLog;
 
     return parsed;

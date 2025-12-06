@@ -13,7 +13,7 @@ export interface EstimateInputs {
   origin: string;
   destination: string;
   destinationProvince?: string; // NEW: Explicit province code (e.g., 'VR', 'MI')
-  excludeOriginTransfer: boolean;
+  // REMOVED: excludeOriginTransfer
   serviceType: ServiceType;
   transportMode: TransportMode;
   startDate: string;

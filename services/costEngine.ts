@@ -221,6 +221,12 @@ export const calculateDeterministicCosts = (
     let provinceCosts: Record<string, number> | undefined;
     if (inputs.logisticsConfig && inputs.destinationProvince) {
         provinceCosts = inputs.logisticsConfig[inputs.destinationProvince];
+        if (provinceCosts) {
+             debugBuffer += `Provincia trovata in CSV: ${Object.keys(provinceCosts).length} colonne dati disponibili.\n`;
+             debugBuffer += `Keys: ${Object.keys(provinceCosts).join(', ').substring(0, 100)}...\n`;
+        } else {
+             debugBuffer += `Provincia '${inputs.destinationProvince}' NON trovata nel CSV Logistica.\n`;
+        }
     }
 
     // --- VEHICLE SELECTION LOGIC (STRICT) ---
@@ -310,14 +316,6 @@ export const calculateDeterministicCosts = (
         logisticsLog += `• Noleggio Muletto in loco: €${forkliftCost} (Cliente sprovvisto).\n`;
     }
 
-    if (inputs.excludeOriginTransfer) {
-        if (materialTransportCost > 0) {
-            logisticsLog += `• (Trasporto materiale €${materialTransportCost} stornato su richiesta utente).\n`;
-            materialTransportCost = 0;
-            logisticsMethod = "Ritiro Cliente (Ex Works)";
-        }
-    }
-
     categoryExplanations["Viaggio"] = travelLog + logisticsLog;
 
     // --- 6. TOTALS ---
@@ -342,7 +340,7 @@ export const calculateDeterministicCosts = (
     if (inputs.discountPercent && inputs.discountPercent > 0) {
         const discountAmount = salesPrice * (inputs.discountPercent / 100);
         salesPrice -= discountAmount;
-        categoryExplanations["Altro"] = (categoryExplanations["Altro"] || "") + `• Applicato Sconto Volume ${inputs.discountPercent}%: -€${discountAmount.toFixed(2)}\n`;
+        categoryExplanations["Altro"] = (categoryExplanations["Altro"] || "") + `• Applicato Sconto Volume: -${inputs.discountPercent}% su PV (€${discountAmount.toFixed(2)})\n`;
     }
     
     const marginAmount = salesPrice - totalCost;
@@ -350,27 +348,21 @@ export const calculateDeterministicCosts = (
     return {
         distanceKm,
         travelDurationHours: travelTimeOneWay,
-        
         internalTravelCost,
         internalTravelTimeCost,
         internalHotelCost,
         internalPerDiemCost,
         internalLaborCost,
-        
         externalLaborCost,
-        
         forkliftCost,
         materialTransportCost,
-        
         totalCost,
         salesPrice,
         marginAmount,
-        
         isWeekendReturnApplied,
         activeTechs: totalTechs,
         totalManHours: internalLaborHours + externalLaborHours,
         logisticsMethod,
-        
         categoryExplanations,
         debugLog: debugBuffer
     };

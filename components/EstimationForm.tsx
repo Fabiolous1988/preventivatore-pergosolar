@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { EstimateInputs, ServiceType, TransportMode, ModelsConfig, LogisticsConfig, PergolaModel, DiscountRule } from '../types';
 import { calculateInstallationHours, calculateBallastCount, calculateTotalWeight, normalize, getDynamicModelList, getBallastList, explainCalculation } from '../services/calculator';
@@ -25,8 +26,7 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
     province: 'VR' 
   });
   const [destination, setDestination] = useState<AddressState>({ street: '', city: '', zip: '', province: '' });
-  const [excludeOriginTransfer, setExcludeOriginTransfer] = useState(true);
-
+  
   const [useInternalTeam, setUseInternalTeam] = useState(true);
   const [internalTechs, setInternalTechs] = useState(2);
   const [useExternalTeam, setUseExternalTeam] = useState(false);
@@ -59,7 +59,7 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
   const [reasoningText, setReasoningText] = useState("");
   const [calculatedWeight, setCalculatedWeight] = useState(0);
 
-  const [formData, setFormData] = useState<Omit<EstimateInputs, 'origin' | 'destination' | 'destinationProvince' | 'excludeOriginTransfer' | 'selectedModelId' | 'parkingSpots' | 'includePV' | 'includeGaskets' | 'includeFabric' | 'includeInsulatedPanels' | 'includeBallast' | 'calculatedHours' | 'useInternalTeam' | 'internalTechs' | 'useExternalTeam' | 'externalTechs' | 'modelsConfig' | 'hasForklift' | 'returnOnWeekends' | 'marginPercent' | 'extraHourlyCost' | 'extraDailyCost' | 'discountPercent'>>({
+  const [formData, setFormData] = useState<Omit<EstimateInputs, 'origin' | 'destination' | 'destinationProvince' | 'selectedModelId' | 'parkingSpots' | 'includePV' | 'includeGaskets' | 'includeFabric' | 'includeInsulatedPanels' | 'includeBallast' | 'calculatedHours' | 'useInternalTeam' | 'internalTechs' | 'useExternalTeam' | 'externalTechs' | 'modelsConfig' | 'hasForklift' | 'returnOnWeekends' | 'marginPercent' | 'extraHourlyCost' | 'extraDailyCost' | 'discountPercent'>>({
     serviceType: ServiceType.FULL_INSTALLATION,
     transportMode: TransportMode.COMPANY_VEHICLE,
     startDate: new Date().toISOString().split('T')[0],
@@ -265,7 +265,6 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
       origin: originStr.trim(),
       destination: destStr.trim(),
       destinationProvince: destination.province.toUpperCase().trim(),
-      excludeOriginTransfer,
       useInternalTeam,
       internalTechs,
       useExternalTeam,
@@ -313,12 +312,6 @@ const EstimationForm: React.FC<Props> = ({ onSubmit, isLoading, modelsConfig, di
                      <input type="text" value={origin.zip} onChange={(e) => handleAddressChange('origin', 'zip', e.target.value)} className="col-span-2 p-2.5 border border-slate-300 rounded-lg text-sm" />
                      <input type="text" value={origin.city} onChange={(e) => handleAddressChange('origin', 'city', e.target.value)} className="col-span-3 p-2.5 border border-slate-300 rounded-lg text-sm" />
                      <input type="text" value={origin.province} onChange={(e) => handleAddressChange('origin', 'province', e.target.value)} className="col-span-1 p-2.5 border border-slate-300 rounded-lg text-sm uppercase" maxLength={2} />
-                </div>
-                <div className="flex items-start gap-3 mt-1 p-2 bg-blue-50/50 rounded-md border border-blue-100">
-                    <input id="excludeTransfer" type="checkbox" checked={excludeOriginTransfer} onChange={(e) => setExcludeOriginTransfer(e.target.checked)} className="w-4 h-4 mt-1" />
-                    <label htmlFor="excludeTransfer" className="text-xs text-slate-600 font-semibold pt-0.5">
-                        Escludi trasporto iniziale (Last-Mile HQ)
-                    </label>
                 </div>
             </div>
         </div>
